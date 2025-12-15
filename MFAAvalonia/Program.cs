@@ -43,18 +43,86 @@ sealed class Program
     // yet and stuff might break.
     public static Dictionary<string, string> Args { get; private set; } = new();
     private static Mutex? _mutex;
+    private static bool _mutexReleased = false;
+    private static readonly object _mutexLock = new(); 
+    private static int _mutexOwnerThreadId = -1;
     public static bool IsNewInstance = true;
+
     public static void ReleaseMutex()
     {
-        try
+
+        if (_mutexReleased || _mutex == null)
         {
-            _mutex?.ReleaseMutex();
-            _mutex?.Close();
-            _mutex = null;
+            return;
         }
-        catch (Exception e)
+
+        // 检查当前线程是否是获取 Mutex 的线程
+        if (Environment.CurrentManagedThreadId != _mutexOwnerThreadId)
         {
-            LoggerHelper.Error(e);
+            // 如果不是，尝试通过 UI 线程（主线程）来释放
+            // 因为在 Avalonia 中，UI 线程就是主线程
+            try
+            {
+
+                // 同步调用到 UI 线程执行释放
+                _ = DispatcherHelper.RunOnMainThreadAsync(ReleaseMutexInternal);
+
+            }
+            catch (Exception)
+            {
+                // Dispatcher 可能已经关闭，直接关闭 Mutex 句柄
+                try
+                {
+                    _mutex?.Close();
+                    _mutex = null;
+                    _mutexReleased = true;
+                }
+                catch
+                {
+                    // 忽略
+                }
+            }
+            return;
+        }
+
+        ReleaseMutexInternal();
+
+    }
+
+    private static void ReleaseMutexInternal()
+    {
+        lock (_mutexLock)
+        {
+            if (_mutexReleased || _mutex == null)
+            {
+                return;
+            }
+
+            try
+            {
+                _mutex.ReleaseMutex();
+                _mutex.Close();
+                _mutex = null;
+                _mutexReleased = true;
+            }
+            catch (ApplicationException)
+            {
+                // Mutex was not owned by the current thread, just close it
+                try
+                {
+                    _mutex?.Close();
+                    _mutex = null;
+                    _mutexReleased = true;
+                }
+                catch (Exception)
+                {
+                    // 忽略关闭时的异常
+                }
+            }
+            catch (Exception e)
+            {
+                LoggerHelper.Error(e);
+            }
         }
     }
 
@@ -67,7 +135,7 @@ sealed class Program
             Directory.SetCurrentDirectory(AppContext.BaseDirectory);
 
             PrivatePathHelper.CleanupDuplicateLibraries(AppContext.BaseDirectory, AppContext.GetData("SubdirectoriesToProbe") as string);
-            
+
             PrivatePathHelper.SetupNativeLibraryResolver();
 
             List<string> resultDirectories = new List<string>();
@@ -120,6 +188,7 @@ sealed class Program
                     .Replace("/", "_")
                     .Replace(":", string.Empty);
             _mutex = new Mutex(true, mutexName, out IsNewInstance);
+            _mutexOwnerThreadId = Environment.CurrentManagedThreadId;
 
             try
             {

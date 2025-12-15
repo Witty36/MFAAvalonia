@@ -1,20 +1,13 @@
-﻿using Avalonia;
-using Avalonia.Media;
-using Avalonia.Media.Imaging;
-using Avalonia.Platform;
-using Avalonia.Threading;
+﻿using Avalonia.Controls;
 using MaaFramework.Binding;
 using MaaFramework.Binding.Buffers;
-using MaaFramework.Binding.Interop.Native;
 using MaaFramework.Binding.Notification;
+using MaaFramework.Binding.Custom;
 using MFAAvalonia.Configuration;
-using MFAAvalonia.Extensions.MaaFW.Custom;
 using MFAAvalonia.Helper;
-using MFAAvalonia.Helper.Converters;
 using MFAAvalonia.Helper.ValueType;
-using MFAAvalonia.ViewModels.Other;
+using MFAAvalonia.Helper.Converters;
 using MFAAvalonia.ViewModels.Pages;
-using MFAAvalonia.Views.Pages;
 using MFAAvalonia.Views.Windows;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -39,8 +32,6 @@ using MaaGlobal = MaaFramework.Binding.MaaGlobal;
 using MaaResource = MaaFramework.Binding.MaaResource;
 using MaaTasker = MaaFramework.Binding.MaaTasker;
 using MaaToolkit = MaaFramework.Binding.MaaToolkit;
-using Pen = Avalonia.Media.Pen;
-using Size = Avalonia.Size;
 
 namespace MFAAvalonia.Extensions.MaaFW;
 #pragma warning  disable CS4014 // 由于此调用不会等待，因此在此调用完成之前将会继续执行当前方法.
@@ -179,7 +170,7 @@ public class MaaProcessor
         // 加载 Description
         if (!string.IsNullOrWhiteSpace(maaInterface.Description))
         {
-            var description = await maaInterface.Description.ResolveMarkdownContentAsync(projectDir);
+            var description = await maaInterface.Description.ResolveContentAsync(projectDir);
             Instances.SettingsViewModel.ResourceDescription = description;
             Instances.SettingsViewModel.HasResourceDescription = !string.IsNullOrWhiteSpace(description);
         }
@@ -192,7 +183,7 @@ public class MaaProcessor
         // 加载 Contact
         if (!string.IsNullOrWhiteSpace(maaInterface.Contact))
         {
-            var contact = await maaInterface.Contact.ResolveMarkdownContentAsync(projectDir);
+            var contact = await maaInterface.Contact.ResolveContentAsync(projectDir);
             Instances.SettingsViewModel.ResourceContact = contact;
             Instances.SettingsViewModel.HasResourceContact = !string.IsNullOrWhiteSpace(contact);
         }
@@ -205,7 +196,7 @@ public class MaaProcessor
         // 加载 License
         if (!string.IsNullOrWhiteSpace(maaInterface.License))
         {
-            var license = await maaInterface.License.ResolveMarkdownContentAsync(projectDir);
+            var license = await maaInterface.License.ResolveContentAsync(projectDir);
             Instances.SettingsViewModel.ResourceLicense = license;
             Instances.SettingsViewModel.HasResourceLicense = !string.IsNullOrWhiteSpace(license);
         }
@@ -221,15 +212,44 @@ public class MaaProcessor
 
     public void SetTasker(MaaTasker? maaTasker = null)
     {
-        if (maaTasker == null)
+        if (maaTasker == null && MaaTasker != null)
         {
-            MaaTasker?.Stop().Wait();
+            var oldTasker = MaaTasker;
+            MaaTasker = null; // 先设置为 null，防止重复释放
+
+            try
+            {
+                // 使用超时机制避免无限等待，最多等待 5 秒
+                var stopTask = Task.Run(() =>
+                {
+                    try
+                    {
+                        oldTasker.Stop().Wait();
+                    }
+                    catch (Exception ex)
+                    {
+                        LoggerHelper.Warning($"MaaTasker Stop inner failed: {ex.Message}");
+                    }
+                });
+
+                if (!stopTask.Wait(TimeSpan.FromSeconds(5)))
+                {
+                    LoggerHelper.Warning("MaaTasker Stop timed out after 5 seconds");
+                }
+            }
+            catch (Exception e)
+            {
+                LoggerHelper.Warning($"MaaTasker Stop failed: {e.Message}");
+            }
+
             _agentStarted = false;
-            SafeKillAgentProcess();
-            MaaTasker?.Dispose();
+            SafeKillAgentProcess(oldTasker);
             Instances.TaskQueueViewModel.SetConnected(false);
         }
-        MaaTasker = maaTasker;
+        else if (maaTasker != null)
+        {
+            MaaTasker = maaTasker;
+        }
     }
 
     public MaaTasker? GetTasker(CancellationToken token = default)
@@ -244,11 +264,12 @@ public class MaaProcessor
         MaaTasker ??= (await InitializeMaaTasker(token)).Item1;
         return MaaTasker;
     }
+
     public async Task<(MaaTasker?, bool, bool)> GetTaskerAndBoolAsync(CancellationToken token = default)
     {
-        var MaaTaskerTuple = await InitializeMaaTasker(token);
-        MaaTasker ??= MaaTaskerTuple.Item1;
-        return (MaaTasker, MaaTaskerTuple.Item2, MaaTaskerTuple.Item3);
+        var tuple = MaaTasker != null ? (MaaTasker, false, false) : await InitializeMaaTasker(token);
+        MaaTasker ??= tuple.Item1;
+        return (MaaTasker, tuple.Item2, tuple.Item3);
     }
 
     public ObservableCollection<DragItemViewModel> TasksSource { get; private set; } =
@@ -267,19 +288,43 @@ public class MaaProcessor
         if (test)
             TryConnectAsync(CancellationToken.None);
         using var buffer = GetImage(MaaTasker?.Controller);
-        return buffer.ToBitmap();
+        return buffer?.ToBitmap();
     }
 
-    public MaaImageBuffer GetImage(IMaaController? maaController)
+    /// <summary>
+    /// 获取截图的MaaImageBuffer。调用者必须负责释放返回的 buffer。
+    /// </summary>
+    /// <param name="maaController">控制器实例</param>
+    /// <returns>包含截图的 MaaImageBuffer，如果失败则返回 null</returns>
+    public MaaImageBuffer? GetImage(IMaaController? maaController)
     {
-        var buffer = new MaaImageBuffer();
         if (maaController == null)
+            return null;
+
+        var buffer = new MaaImageBuffer();
+        try
+        {
+            var status = maaController.Screencap().Wait();
+            if (status != MaaJobStatus.Succeeded)
+            {
+                buffer.Dispose();
+                return null;
+            }
+
+            if (!maaController.GetCachedImage(buffer))
+            {
+                buffer.Dispose();
+                return null;
+            }
+
             return buffer;
-        var status = maaController.Screencap().Wait();
-        if (status != MaaJobStatus.Succeeded)
-            return buffer;
-        maaController.GetCachedImage(buffer);
-        return buffer;
+        }
+        catch (Exception ex)
+        {
+            LoggerHelper.Warning($"GetImage failed: {ex.Message}");
+            buffer.Dispose();
+            return null;
+        }
     }
 
     #endregion
@@ -314,6 +359,10 @@ public class MaaProcessor
         AutoInitDictionary.Clear();
         LoggerHelper.Info(LangKeys.LoadingResources.ToLocalization());
 
+        if (Design.IsDesignMode)
+        {
+            return (null, false, false);
+        }
         MaaResource maaResource = null;
         try
         {
@@ -335,6 +384,7 @@ public class MaaProcessor
                 HandleInitializationError(exception, LangKeys.LoadResourcesFailed.ToLocalization(), LangKeys.LoadResourcesFailedDetail.ToLocalization());
                 RootView.AddLog(LangKeys.LoadResourcesFailed.ToLocalization(), Brushes.OrangeRed, changeColor: false);
                 InvalidResource = true;
+                throw exception;
             });
 
             Instances.PerformanceUserControlModel.ChangeGpuOption(maaResource, Instances.PerformanceUserControlModel.GpuOption);
@@ -349,8 +399,9 @@ public class MaaProcessor
             LoggerHelper.Warning("Resource loading was canceled");
             return (null, InvalidResource, ShouldRetry);
         }
-        catch (MaaException)
+        catch (MaaJobStatusException)
         {
+            ShouldRetry = false;
             return (null, InvalidResource, ShouldRetry);
         }
         catch (Exception e)
@@ -415,6 +466,11 @@ public class MaaProcessor
                 DisposeOptions = DisposeOptions.All,
             };
 
+            tasker.Releasing += (_, _) =>
+            {
+                tasker.Callback -= HandleCallBack;
+            };
+
             try
             {
                 var tempMFADir = Path.Combine(AppContext.BaseDirectory, "temp_mfa");
@@ -433,7 +489,8 @@ public class MaaProcessor
             {
                 LoggerHelper.Error(e);
             }
-            //            tasker.Resource.Register(new JieGardenAction());
+            // 注册内置的自定义 Action（用于内存泄漏测试）
+            //tasker.Resource.Register(new Custom.MemoryLeakTestAction());
             // 获取代理配置（假设Interface在UI线程中访问）
             var agentConfig = Interface?.Agent;
             if (agentConfig is { ChildExec: not null } && !_agentStarted)
@@ -450,14 +507,18 @@ public class MaaProcessor
                 try
                 {
                     _agentClient = MaaAgentClient.Create(identifier, tasker);
-                    _agentClient.SetTimeout(TimeSpan.FromSeconds(Interface?.Agent?.Timeout ?? 20));
-                    _agentClient.AttachDisposeToResource();
-                    _agentClient.Releasing += (_, _) => LoggerHelper.Info("退出Agent进程");
+                    var timeOut = Interface?.Agent?.Timeout ?? 120;
+                    _agentClient.SetTimeout(TimeSpan.FromSeconds(timeOut < 0 ? int.MaxValue : timeOut));
+                    _agentClient.Releasing += (_, _) =>
+                    {
+                        LoggerHelper.Info("退出Agent进程");
+                        _agentClient = null;
+                    };
 
                     LoggerHelper.Info($"Agent Client Hash: {_agentClient?.GetHashCode()}");
                     if (!Directory.Exists($"{AppContext.BaseDirectory}"))
                         Directory.CreateDirectory($"{AppContext.BaseDirectory}");
-                    var program = MaaInterface.ReplacePlaceholder(agentConfig.ChildExec, AppContext.BaseDirectory);
+                    var program = MaaInterface.ReplacePlaceholder(agentConfig.ChildExec, AppContext.BaseDirectory, true);
                     if (IsPathLike(program))
                         program = Path.GetFullPath(program, AppContext.BaseDirectory);
                     var rawArgs = agentConfig.ChildArgs ?? [];
@@ -480,7 +541,7 @@ public class MaaProcessor
                         })
                         .Select(ConvertPath).ToList();
 
-                    var executablePath = PythonPathFinder.FindPythonPath(program);
+                    var executablePath = PathFinder.FindPath(program);
 
                     // 检查可执行文件是否存在
                     if (!File.Exists(executablePath))
@@ -504,32 +565,193 @@ public class MaaProcessor
                     LoggerHelper.Info(
                         $"Agent Command: {program} {(program!.Contains("python") && replacedArgs.Contains(".py") && !replacedArgs.Any(arg => arg.Contains("-u")) ? "-u " : "")}{string.Join(" ", replacedArgs)} {_agentClient.Id} "
                         + $"socket_id: {_agentClient.Id}");
-                    if (_agentClient.LinkStart(startInfo, token))
+                    IMaaAgentClient.AgentServerStartupMethod method = (s, directory) =>
                     {
-                        _agentProcess = _agentClient.AgentServerProcess;
-                        _agentProcess.Exited += (_, _) =>
+                        _agentProcess = Process.Start(startInfo);
+                        if (_agentProcess == null)
+                            LoggerHelper.Error("Agent start failed!");
+                        else
                         {
-                            LoggerHelper.Info("Agent process exited!");
-                            _agentProcess = null;
-                        };
+                            _agentProcess.Exited += (_, _) =>
+                            {
+                                LoggerHelper.Info("Agent process exited!");
+                                LoggerHelper.Info("MaaTasker exited!");
+                                _agentProcess = null;
+                            };
+                            _agentProcess?.OutputDataReceived += (sender, args) =>
+                            {
+                                if (!string.IsNullOrEmpty(args.Data))
+                                {
+                                    var outData = args.Data;
+                                    try
+                                    {
+                                        outData = Regex.Replace(outData, @"\x1B\[[0-9;]*[a-zA-Z]", "");
+                                    }
+                                    catch (Exception)
+                                    {
+                                    }
+
+                                    DispatcherHelper.PostOnMainThread(() =>
+                                    {
+                                        if (TaskQueueViewModel.CheckShouldLog(outData))
+                                        {
+                                            RootView.AddLog(outData);
+                                        }
+                                        else
+                                        {
+                                            LoggerHelper.Info("agent:" + outData);
+                                        }
+                                    });
+                                }
+                            };
+
+                            _agentProcess?.ErrorDataReceived += (sender, args) =>
+                            {
+                                if (!string.IsNullOrEmpty(args.Data))
+                                {
+                                    var outData = args.Data;
+                                    try
+                                    {
+                                        outData = Regex.Replace(outData, @"\x1B\[[0-9;]*[a-zA-Z]", "");
+                                    }
+                                    catch (Exception)
+                                    {
+                                    }
+
+                                    DispatcherHelper.PostOnMainThread(() =>
+                                    {
+                                        if (TaskQueueViewModel.CheckShouldLog(outData))
+                                        {
+                                            RootView.AddLog(outData);
+                                        }
+                                        else
+                                        {
+                                            LoggerHelper.Info("agent:" + outData);
+                                        }
+                                    });
+                                }
+                            };
+                            _agentProcess?.BeginOutputReadLine();
+                            _agentProcess?.BeginErrorReadLine();
+                            if (_agentProcess != null)
+                                TaskManager.RunTaskAsync(async () => await _agentProcess.WaitForExitAsync(token), token: token, name: "Agent程序启动");
+
+                        }
+                        return _agentProcess;
+                    };
+                    // 添加重连逻辑，最多重试3次
+                    const int maxRetries = 3;
+                    bool linkStartSuccess = false;
+                    Exception? lastException = null;
+
+                    for (int retryCount = 0; retryCount < maxRetries && !linkStartSuccess && !token.IsCancellationRequested; retryCount++)
+                    {
+                        try
+                        {
+                            // 在每次迭代开始时检测token
+                            token.ThrowIfCancellationRequested();
+
+                            if (retryCount > 0)
+                            {
+                                LoggerHelper.Info($"Agent LinkStart retry attempt {retryCount + 1}/{maxRetries}");
+
+                                RootView.AddLog(LangKeys.AgentConnectionRetry.ToLocalizationFormatted(false, $"{retryCount + 1}/{maxRetries}"), Brushes.Orange, changeColor: false);
+                                // 等待一段时间后重试
+                                await Task.Delay(1000 * retryCount, token);
+
+                                // 重新启动进程
+                                if (_agentProcess != null && !_agentProcess.HasExited)
+                                {
+                                    try
+                                    {
+                                        _agentProcess.Kill(true);
+                                        _agentProcess.WaitForExit(3000);
+                                    }
+                                    catch (Exception killEx)
+                                    {
+                                        LoggerHelper.Warning($"Failed to kill agent process: {killEx.Message}");
+                                    }
+                                    _agentProcess.Dispose();
+                                    _agentProcess = null;
+                                }
+                            }
+
+                            linkStartSuccess = _agentClient.LinkStart(method, token);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            // 任务被取消，直接退出重试循环
+                            LoggerHelper.Info("Agent LinkStart was canceled by user");
+                            throw;
+                        }
+                        catch (SEHException sehEx)
+                        {
+                            lastException = sehEx;
+                            LoggerHelper.Warning($"SEHException during LinkStart (attempt {retryCount + 1}): {sehEx.Message}");
+
+                            if (retryCount < maxRetries - 1)
+                            {
+                                // 在重试前检测token
+                                if (token.IsCancellationRequested)
+                                {
+                                    LoggerHelper.Info("Agent retry canceled by user");
+                                    token.ThrowIfCancellationRequested();
+                                }
+
+                                // 清理当前状态，准备重试
+                                SafeKillAgentProcess();
+
+                                // 重新创建 AgentClient
+                                try
+                                {
+                                    _agentClient = MaaAgentClient.Create(identifier, tasker);
+                                    timeOut = Interface?.Agent?.Timeout ?? 120;
+                                    _agentClient.SetTimeout(TimeSpan.FromSeconds(timeOut < 0 ? int.MaxValue : timeOut));
+                                    _agentClient.Releasing += (_, _) =>
+                                    {
+                                        LoggerHelper.Info("退出Agent进程");
+                                    };
+                                }
+                                catch (Exception recreateEx)
+                                {
+                                    LoggerHelper.Error($"Failed to recreate AgentClient: {recreateEx.Message}");
+                                    throw;
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            lastException = ex;
+                            LoggerHelper.Warning($"Exception during LinkStart (attempt {retryCount + 1}): {ex.Message}");
+
+                            // 对于非 SEHException，不进行重试
+                            break;
+                        }
                     }
-                    else
+                    // 循环结束后检查是否因为取消而退出
+                    if (token.IsCancellationRequested && !linkStartSuccess)
+                    {
+                        LoggerHelper.Info("Agent LinkStart loop exited due to cancellation");
+                        token.ThrowIfCancellationRequested();
+                    }
+                    if (!linkStartSuccess)
                     {
                         // 尝试获取进程的错误输出
-                        var errorMessage = "Failed to LinkStart agentClient!";
-                        var agentProcess = _agentClient.AgentServerProcess;
+                        var errorMessage = lastException?.Message ?? "Failed to LinkStart agentClient!";
+                        var agentProcess = _agentProcess;
                         if (agentProcess != null)
                         {
                             try
                             {
                                 var errorDetails = new StringBuilder();
+                                errorDetails.AppendLine(errorMessage);
 
                                 // 如果进程已经退出，尝试读取错误输出
                                 if (agentProcess.HasExited)
                                 {
                                     var exitCode = agentProcess.ExitCode;
-                                    var stderr = agentProcess.StandardError.ReadToEnd();
-                                    var stdout = agentProcess.StandardOutput.ReadToEnd();
+                                    var stderr = await agentProcess.StandardError.ReadToEndAsync(token);
+                                    var stdout = await agentProcess.StandardOutput.ReadToEndAsync(token);
 
                                     errorDetails.AppendLine($"Agent process exited with code: {exitCode}");
 
@@ -553,8 +775,8 @@ public class MaaProcessor
                                     if (agentProcess.WaitForExit(3000))
                                     {
                                         var exitCode = agentProcess.ExitCode;
-                                        var stderr = agentProcess.StandardError.ReadToEnd();
-                                        var stdout = agentProcess.StandardOutput.ReadToEnd();
+                                        var stderr = await agentProcess.StandardError.ReadToEndAsync(token);
+                                        var stdout = await agentProcess.StandardOutput.ReadToEndAsync(token);
 
                                         errorDetails.AppendLine($"Agent process exited with code: {exitCode}");
 
@@ -582,65 +804,13 @@ public class MaaProcessor
                         }
                         throw new Exception(errorMessage);
                     }
-
-                    _agentProcess.OutputDataReceived += (sender, args) =>
-                    {
-                        if (!string.IsNullOrEmpty(args.Data))
-                        {
-                            var outData = args.Data;
-                            try
-                            {
-                                outData = Regex.Replace(outData, @"\x1B\[[0-9;]*[a-zA-Z]", "");
-                            }
-                            catch (Exception)
-                            {
-                            }
-
-                            DispatcherHelper.PostOnMainThread(() =>
-                            {
-                                if (TaskQueueViewModel.CheckShouldLog(outData))
-                                {
-                                    RootView.AddLog(outData);
-                                }
-                                else
-                                {
-                                    LoggerHelper.Info("agent:" + outData);
-                                }
-                            });
-                        }
-                    };
-
-                    _agentProcess.ErrorDataReceived += (sender, args) =>
-                    {
-                        if (!string.IsNullOrEmpty(args.Data))
-                        {
-                            var outData = args.Data;
-                            try
-                            {
-                                outData = Regex.Replace(outData, @"\x1B\[[0-9;]*[a-zA-Z]", "");
-                            }
-                            catch (Exception)
-                            {
-                            }
-
-                            DispatcherHelper.PostOnMainThread(() =>
-                            {
-                                if (TaskQueueViewModel.CheckShouldLog(outData))
-                                {
-                                    RootView.AddLog(outData);
-                                }
-                                else
-                                {
-                                    LoggerHelper.Info("agent:" + outData);
-                                }
-                            });
-                        }
-                    };
-                    _agentProcess.BeginOutputReadLine();
-                    _agentProcess.BeginErrorReadLine();
-
-                    TaskManager.RunTaskAsync(async () => await _agentProcess.WaitForExitAsync(token), token: token, name: "Agent程序启动");
-
+                }
+                catch (OperationCanceledException)
+                {
+                    // 任务被用户取消，直接向上抛出，不显示错误信息
+                    LoggerHelper.Info("Agent initialization was canceled by user");
+                    SafeKillAgentProcess();
+                    throw;
                 }
                 catch (Exception ex)
                 {
@@ -655,81 +825,16 @@ public class MaaProcessor
 
                 _agentStarted = true;
             }
-            // RegisterCustomRecognitionsAndActions(tasker);
+            RegisterCustomRecognitionsAndActions(tasker);
             Instances.TaskQueueViewModel.SetConnected(true);
             //  tasker.Utility.SetOption_Recording(ConfigurationManager.Maa.GetValue(ConfigurationKeys.Recording, false));
             tasker.Global.SetOption_SaveDraw(ConfigurationManager.Maa.GetValue(ConfigurationKeys.SaveDraw, false));
-            // tasker.Global.SetOption_DebugMode(ConfigurationManager.Maa.GetValue(ConfigurationKeys.ShowHitDraw, false));
+            tasker.Global.SetOption(GlobalOption.SaveOnError, ConfigurationManager.Maa.GetValue(ConfigurationKeys.SaveOnError, true));
+            tasker.Global.SetOption_DebugMode(ConfigurationManager.Maa.GetValue(ConfigurationKeys.ShowHitDraw, false));
 
-            tasker.Callback += (o, args) =>
-            {
-                var jObject = JObject.Parse(args.Details);
-
-                var name = jObject["name"]?.ToString() ?? string.Empty;
-                if (args.Message.StartsWith(MaaMsg.Node.Recognition.Succeeded) || args.Message.StartsWith(MaaMsg.Node.Action.Succeeded))
-                {
-                    if (jObject["reco_id"] != null)
-                    {
-                        var recoId = Convert.ToInt64(jObject["reco_id"]?.ToString() ?? string.Empty);
-                        if (recoId > 0)
-                        {
-                            //     tasker.GetNodeDetail(nodeId, out _, out var recognitionId, out var actionId, out _);
-                            var rect = new MaaRectBuffer();
-                            var imageBuffer = new MaaImageBuffer();
-                            tasker.GetRecognitionDetail(recoId, out string node,
-                                out var algorithm,
-                                out var hit,
-                                rect,
-                                out var detailJson,
-                                imageBuffer, new MaaImageListBuffer());
-                            var bitmap = imageBuffer.ToBitmap();
-                            if (hit && bitmap != null)
-                            {
-                                bitmap = bitmap.DrawRectangle(rect, Brushes.LightGreen, 1.5f);
-                            }
-
-                            DispatcherHelper.PostOnMainThread(() =>
-                            {
-                                Instances.ScreenshotViewModel.ScreenshotImage = bitmap;
-                                Instances.ScreenshotViewModel.TaskName = name;
-                            });
-                        }
-
-                    }
-                    if (jObject["action_id"] != null)
-                    {
-                        var actionId = Convert.ToInt64(jObject["action_id"]?.ToString() ?? string.Empty);
-                        if (actionId > 0)
-                        {
-                            //     tasker.GetNodeDetail(nodeId, out _, out var recognitionId, out var actionId, out _);
-                            var rect = new MaaRectBuffer();
-                            var imageBuffer = new MaaImageBuffer();
-                            tasker.GetCachedImage(imageBuffer);
-                            var bitmap = imageBuffer.ToBitmap();
-                            tasker.GetActionDetail(actionId, out _, out _, rect, out var isSucceeded, out _);
-                            if (isSucceeded && bitmap != null)
-                            {
-                                bitmap = bitmap.DrawRectangle(rect, Brushes.LightGreen, 1.5f);
-                            }
-
-                            DispatcherHelper.PostOnMainThread(() =>
-                            {
-                                Instances.ScreenshotViewModel.ScreenshotImage = bitmap;
-                                Instances.ScreenshotViewModel.TaskName = name;
-                            });
-                        }
-
-                    }
-
-                }
-
-                if (jObject.ContainsKey("focus"))
-                {
-                    _focusHandler ??= new FocusHandler(AutoInitDictionary);
-                    _focusHandler.UpdateDictionary(AutoInitDictionary);
-                    _focusHandler.DisplayFocus(jObject, args.Message, args.Details);
-                }
-            };
+            LoggerHelper.Info("Maafw debug mode: " + ConfigurationManager.Maa.GetValue(ConfigurationKeys.ShowHitDraw, false));
+            // 注意：只订阅一次回调，避免嵌套订阅导致内存泄漏
+            tasker.Callback += HandleCallBack;
 
             return (tasker, InvalidResource, ShouldRetry);
         }
@@ -749,6 +854,138 @@ public class MaaProcessor
         }
     }
 
+    public void HandleCallBack(object? sender, MaaCallbackEventArgs args)
+    {
+        var jObject = JObject.Parse(args.Details);
+        MaaTasker? tasker = null;
+        if (sender is MaaTasker t)
+            tasker = t;
+        if (sender is MaaContext context)
+            tasker = context.Tasker;
+        if (tasker != null && Instances.GameSettingsUserControlModel.ShowHitDraw)
+        {
+            var name = jObject["name"]?.ToString() ?? string.Empty;
+            if (args.Message.StartsWith(MaaMsg.Node.Recognition.Succeeded) || args.Message.StartsWith(MaaMsg.Node.Action.Succeeded))
+            {
+                if (jObject["reco_id"] != null)
+                {
+                    var recoId = Convert.ToInt64(jObject["reco_id"]?.ToString() ?? string.Empty);
+                    if (recoId > 0)
+                    {
+                        Bitmap? bitmapToSet = null;
+                        try
+                        {
+                            //使用 using 确保资源正确释放
+                            using var rect = new MaaRectBuffer();
+                            using var imageBuffer = new MaaImageBuffer();
+                            using var imageListBuffer = new MaaImageListBuffer();
+                            tasker.GetRecognitionDetail(recoId, out string node,
+                                out var algorithm,
+                                out var hit,
+                                rect,
+                                out var detailJson,
+                                imageBuffer, imageListBuffer);
+                            var bitmap = imageBuffer.ToBitmap();
+                            if (bitmap != null)
+                            {
+                                if (hit)
+                                {
+                                    var newBitmap = bitmap.DrawRectangle(rect, Brushes.LightGreen, 1.5f);
+                                    // 如果 DrawRectangle 返回了新的 Bitmap，释放原始的
+                                    if (!ReferenceEquals(newBitmap, bitmap))
+                                    {
+                                        bitmap.Dispose();
+                                    }
+                                    bitmap = newBitmap;
+                                }
+                                bitmapToSet = bitmap;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            LoggerHelper.Warning($"HandleCallBack recognition error: {ex.Message}");
+                            bitmapToSet?.Dispose();
+                            bitmapToSet = null;
+                        }
+
+
+                        if (bitmapToSet != null)
+                        {
+                            var finalBitmap = bitmapToSet;
+                            DispatcherHelper.PostOnMainThread(() =>
+                            {
+                                // 释放旧的截图
+                                var oldImage = Instances.ScreenshotViewModel.ScreenshotImage;
+                                Instances.ScreenshotViewModel.ScreenshotImage = finalBitmap;
+                                Instances.ScreenshotViewModel.TaskName = name;
+                                oldImage?.Dispose();
+                            });
+                        }
+                    }
+
+                }
+                if (jObject["action_id"] != null)
+                {
+                    var actionId = Convert.ToInt64(jObject["action_id"]?.ToString() ?? string.Empty);
+                    if (actionId > 0)
+                    {
+                        Bitmap? bitmapToSet = null;
+                        try
+                        {
+                            // 使用 using 确保资源正确释放
+                            using var rect = new MaaRectBuffer();
+                            using var imageBuffer = new MaaImageBuffer();
+                            tasker.GetCachedImage(imageBuffer);
+                            var bitmap = imageBuffer.ToBitmap();
+                            tasker.GetActionDetail(actionId, out _, out _, rect, out var isSucceeded, out _);
+                            if (bitmap != null)
+                            {
+                                if (isSucceeded)
+                                {
+                                    var newBitmap = bitmap.DrawRectangle(rect, Brushes.LightGreen, 1.5f);
+                                    // 如果 DrawRectangle 返回了新的 Bitmap，释放原始的
+                                    if (!ReferenceEquals(newBitmap, bitmap))
+                                    {
+                                        bitmap.Dispose();
+                                    }
+                                    bitmap = newBitmap;
+                                }
+                                bitmapToSet = bitmap;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            LoggerHelper.Warning($"HandleCallBack action error: {ex.Message}");
+                            bitmapToSet?.Dispose();
+                            bitmapToSet = null;
+                        }
+
+
+                        if (bitmapToSet != null)
+                        {
+                            var finalBitmap = bitmapToSet;
+                            DispatcherHelper.PostOnMainThread(() =>
+                            {
+                                // 释放旧的截图
+                                var oldImage = Instances.ScreenshotViewModel.ScreenshotImage;
+                                Instances.ScreenshotViewModel.ScreenshotImage = finalBitmap;
+                                Instances.ScreenshotViewModel.TaskName = name;
+                                oldImage?.Dispose();
+                            });
+                        }
+                    }
+                }
+
+            }
+        }
+        if (jObject.ContainsKey("focus"))
+        {
+            _focusHandler ??= new FocusHandler(AutoInitDictionary);
+            _focusHandler.UpdateDictionary(AutoInitDictionary);
+            _focusHandler.DisplayFocus(jObject, args.Message, args.Details);
+        }
+    }
+
     private void HandleInitializationError(Exception e,
         string message,
         bool hasWarning = false,
@@ -759,6 +996,7 @@ public class MaaProcessor
             LoggerHelper.Warning(waringMessage);
         LoggerHelper.Error(e.ToString());
     }
+
     private void HandleInitializationError(Exception e,
         string title,
         string message,
@@ -770,6 +1008,7 @@ public class MaaProcessor
             LoggerHelper.Warning(waringMessage);
         LoggerHelper.Error(e.ToString());
     }
+
     private MaaController InitializeController(bool isAdb)
     {
         ConnectToMAA();
@@ -798,7 +1037,7 @@ public class MaaProcessor
                 Config.AdbDevice.AdbSerial,
                 Config.AdbDevice.ScreenCap, Config.AdbDevice.Input,
                 !string.IsNullOrWhiteSpace(Config.AdbDevice.Config) ? Config.AdbDevice.Config : "{}",
-                Path.Combine(AppContext.BaseDirectory, "MaaAgentBinary")
+                Path.Combine(AppContext.BaseDirectory, "libs", "MaaAgentBinary")
             )
             : new MaaWin32Controller(
                 Config.DesktopWindow.HWnd,
@@ -880,7 +1119,7 @@ public class MaaProcessor
         return false;
     }
 
-    // 防止 interface 加载失败时 Toast 重复显示
+// 防止 interface 加载失败时 Toast 重复显示
     private static bool _interfaceLoadErrorShown = false;
 
     public static (string Key, string Fallback, string Version, string CustomTitle, string CustomFallback) ReadInterface()
@@ -959,6 +1198,26 @@ public class MaaProcessor
         {
             Instances.RootViewModel.ShowResourceVersion(version);
             Instances.VersionUpdateSettingsUserControlModel.ResourceVersion = version;
+
+            // 首次初始化时，根据资源版本自动设置更新来源
+            // 优先级：内测(Alpha=0) > 公测(Beta=1) > 稳定(Stable=2)
+            // 只有当资源版本的优先级高于当前设置时才修改
+            if (!ConfigurationManager.Current.GetValue(ConfigurationKeys.ResourceUpdateChannelInitialized, false))
+            {
+                var resourceVersionType = version.ToVersionType();
+                var currentChannelIndex = Instances.VersionUpdateSettingsUserControlModel.ResourceUpdateChannelIndex;
+                var currentChannelType = currentChannelIndex.ToVersionType();
+
+                // 如果资源版本类型的优先级更高（数值更小），则更新设置
+                if (resourceVersionType < currentChannelType)
+                {
+                    var newIndex = (int)resourceVersionType;
+                    Instances.VersionUpdateSettingsUserControlModel.ResourceUpdateChannelIndex = newIndex;
+                    LoggerHelper.Info($"根据资源版本 '{version}' 自动将更新来源设置为 {resourceVersionType}");
+                }
+                // 标记已初始化
+                ConfigurationManager.Current.SetValue(ConfigurationKeys.ResourceUpdateChannelInitialized, true);
+            }
         }
 
         if (!string.IsNullOrWhiteSpace(customTitle) || !string.IsNullOrWhiteSpace(fallback))
@@ -1228,9 +1487,7 @@ public class MaaProcessor
     {
         return Instances.ConnectSettingsUserControlModel.Win32ControlKeyboardType;
     }
-
     private bool FirstTask = true;
-
     public const string NEW_SEPARATOR = "<|||>";
     public const string OLD_SEPARATOR = ":";
 
@@ -1239,8 +1496,8 @@ public class MaaProcessor
         _taskLoader ??= new TaskLoader(Interface);
         _taskLoader.LoadTasks(tasks, TasksSource, ref FirstTask, oldDrags);
     }
-
     private string? _tempResourceVersion;
+
     public void AppendVersionLog(string? resourceVersion)
     {
         if (resourceVersion is null || _tempResourceVersion == resourceVersion)
@@ -1509,6 +1766,7 @@ public class MaaProcessor
     }
 
     #endregion
+
     public async Task TestConnecting()
     {
         await GetTaskerAsync();
@@ -1521,7 +1779,9 @@ public class MaaProcessor
     {
         if (InitializeData())
         {
-            var tasks = Instances.TaskQueueViewModel.TaskItemViewModels.ToList().FindAll(task => task.IsChecked || task.IsCheckedWithNull == null);
+            // 排除不支持当前资源包的任务（IsResourceSupported 为 false 的任务）
+            var tasks = Instances.TaskQueueViewModel.TaskItemViewModels.ToList()
+                .FindAll(task => (task.IsChecked || task.IsCheckedWithNull == null) && task.IsResourceSupported);
             StartTask(tasks, onlyStart, checkUpdate);
         }
     }
@@ -1534,12 +1794,14 @@ public class MaaProcessor
             StartTask(tasks, onlyStart, checkUpdate);
         }
     }
-
-    public CancellationTokenSource? CancellationTokenSource { get; set; } = new();
-
+    public CancellationTokenSource? CancellationTokenSource
+    {
+        get;
+        private set;
+    } = new();
     private DateTime? _startTime;
-
     private List<DragItemViewModel> _tempTasks = [];
+
     public async Task StartTask(List<DragItemViewModel>? tasks, bool onlyStart = false, bool checkUpdate = false)
     {
         Status = MFATask.MFATaskStatus.NOT_STARTED;
@@ -1596,7 +1858,6 @@ public class MaaProcessor
         // }
         public string? Param { get; set; }
     }
-
 
     private void UpdateTaskDictionary(ref MaaToken taskModels,
         List<MaaInterface.MaaInterfaceSelectOption>? options,
@@ -1825,7 +2086,8 @@ public class MaaProcessor
 
         if (!connected)
         {
-            HandleConnectionFailureAsync(isAdb, token);
+            if (!tuple.Item2 && shouldRetry)
+                HandleConnectionFailureAsync(isAdb, token);
             throw new Exception("Connection failed after all retries");
         }
 
@@ -1887,13 +2149,18 @@ public class MaaProcessor
 
     private void HandleConnectionFailureAsync(bool isAdb, CancellationToken token)
     {
-        token.ThrowIfCancellationRequested();
-        LoggerHelper.Warning(LangKeys.ConnectFailed.ToLocalization());
+        // 如果 token 已取消，不需要再调用 Stop，因为已经在其他地方处理了
+        if (token.IsCancellationRequested)
+        {
+            LoggerHelper.Info("HandleConnectionFailureAsync: token is already canceled, skipping Stop call");
+            return;
+        }
         RootView.AddLogByKey(LangKeys.ConnectFailed);
         Instances.TaskQueueViewModel.SetConnected(false);
         ToastHelper.Warn(LangKeys.Warning_CannotConnect.ToLocalizationFormatted(true, isAdb ? LangKeys.Emulator : LangKeys.Window));
         Stop(MFATask.MFATaskStatus.STOPPED);
     }
+
 
     private void AddCoreTasksAsync(List<NodeAndParam> taskAndParams, CancellationToken token)
     {
@@ -1972,74 +2239,88 @@ public class MaaProcessor
     }
 
     #endregion
-
     #region 停止任务
+
+    private Lock stop = new Lock();
 
     public void Stop(MFATask.MFATaskStatus status, bool finished = false, bool onlyStart = false, Action? action = null)
     {
-        LoggerHelper.Info("Stop Status: " + Status);
-        if (Status == MFATask.MFATaskStatus.STOPPING)
-            return;
-        Status = MFATask.MFATaskStatus.STOPPING;
-        try
+        // 在后台线程执行停止操作，避免阻塞 UI 线程
+        TaskManager.RunTask(() =>
         {
-            var isUpdateRelated = TaskQueue.Any(task => task.IsUpdateRelated);
-            if (!ShouldProcessStop(finished))
+            lock (stop)
             {
-                ToastHelper.Warn(LangKeys.NoTaskToStop.ToLocalization());
-
-                TaskQueue.Clear();
-                return;
-            }
-
-            CancelOperations();
-
-            TaskQueue.Clear();
-
-            Instances.RootViewModel.IsRunning = false;
-
-            ExecuteStopCore(finished, async () =>
-            {
-                var stopResult = MaaJobStatus.Succeeded;
-
-                if (status != MFATask.MFATaskStatus.FAILED && status != MFATask.MFATaskStatus.SUCCEEDED)
+                LoggerHelper.Info("Stop Status: " + Status);
+                if (Status == MFATask.MFATaskStatus.STOPPING)
+                    return;
+                Status = MFATask.MFATaskStatus.STOPPING;
+                DispatcherHelper.PostOnMainThread(() => Instances.TaskQueueViewModel.ToggleEnable = false);
+                try
                 {
-
-                    // 持续尝试停止直到返回 Succeeded
-                    const int maxRetries = 10;
-                    const int retryDelayMs = 500;
-
-                    for (int i = 0; i < maxRetries; i++)
+                    var isUpdateRelated = TaskQueue.Any(task => task.IsUpdateRelated);
+                    if (!ShouldProcessStop(finished))
                     {
+                        ToastHelper.Warn(LangKeys.NoTaskToStop.ToLocalization());
 
-                        stopResult = AbortCurrentTasker();
-                        LoggerHelper.Info($"Stopping tasker attempt {i + 1} returned {stopResult}, retrying...");
-                        if (stopResult == MaaJobStatus.Succeeded)
-                            break;
-
-                        await Task.Delay(retryDelayMs);
+                        TaskQueue.Clear();
+                        return;
                     }
 
-                }
+                    CancelOperations(status == MFATask.MFATaskStatus.STOPPED && !_agentStarted && (_agentClient != null || _agentProcess != null));
 
-                HandleStopResult(status, stopResult, onlyStart, action, isUpdateRelated);
-            });
-        }
-        catch (Exception ex)
-        {
-            HandleStopException(ex);
-        }
+                    TaskQueue.Clear();
+
+                    DispatcherHelper.PostOnMainThread(() => Instances.RootViewModel.IsRunning = false);
+
+                    ExecuteStopCore(finished, async () =>
+                    {
+                        var stopResult = MaaJobStatus.Succeeded;
+
+                        if (MaaTasker is { IsRunning: true, IsStopping: false } && status != MFATask.MFATaskStatus.FAILED && status != MFATask.MFATaskStatus.SUCCEEDED)
+                        {
+
+                            // 持续尝试停止直到返回 Succeeded
+                            const int maxRetries = 10;
+                            const int retryDelayMs = 500;
+
+                            for (int i = 0; i < maxRetries; i++)
+                            {
+                                LoggerHelper.Info($"Stopping tasker attempt {i + 1}");
+                                stopResult = AbortCurrentTasker();
+                                LoggerHelper.Info($"Stopping tasker attempt {i + 1} returned {stopResult}, retrying...");
+
+                                if (stopResult == MaaJobStatus.Succeeded)
+                                    break;
+
+                                await Task.Delay(retryDelayMs);
+                            }
+
+                        }
+
+                        HandleStopResult(status, stopResult, onlyStart, action, isUpdateRelated);
+                        DispatcherHelper.PostOnMainThread(() => Instances.TaskQueueViewModel.ToggleEnable = true);
+                    });
+                }
+                catch (Exception ex)
+                {
+                    DispatcherHelper.PostOnMainThread(() => Instances.TaskQueueViewModel.ToggleEnable = true);
+                    HandleStopException(ex);
+                }
+            }
+        }, "停止任务");
     }
 
-    private void CancelOperations()
+
+    private void CancelOperations(bool killAgent = false)
     {
-        if (!_agentStarted)
+        _emulatorCancellationTokenSource?.SafeCancel();
+        CancellationTokenSource.SafeCancel();
+        if (killAgent)
         {
             SafeKillAgentProcess();
         }
-        _emulatorCancellationTokenSource?.SafeCancel();
-        CancellationTokenSource.SafeCancel();
     }
+
     [SupportedOSPlatform("windows")]
     private static void KillProcessTree(int parentPid)
     {
@@ -2065,35 +2346,155 @@ public class MaaProcessor
         }
     }
 
-    /// <summary>
-    /// 安全地终止 Agent 进程
-    /// </summary>
-    /// <summary>
     /// 强制终止 Agent 进程（用于窗口关闭等紧急情况）
     /// </summary>
-    /// <param name="forceKill">是否使用强制终止模式</param>
-    private void SafeKillAgentProcess()
+    /// <param name="taskerToDispose">原tasker</param>
+    private void SafeKillAgentProcess(MaaTasker? taskerToDispose = null)
     {
-        _agentClient?.LinkStop();
-        _agentClient?.Dispose();
-        _agentClient?.DetachDisposeToResource();
+        // 获取当前引用的本地副本，避免在检查和使用之间被其他线程修改
+        var agentClient = _agentClient;
+        var agentProcess = _agentProcess;
+        // 如果传入了 taskerToDispose，使用它；否则使用当前的 MaaTasker
+        var maaTasker = taskerToDispose ?? MaaTasker;
+
+        // 先清除引用，防止在后续操作中被其他线程访问
         _agentClient = null;
-        try
-        {
-            LoggerHelper.Info(_agentProcess?.HasExited == false ? $"Kill AgentProcess: {_agentProcess?.ProcessName}" : "AgentProcess has exited");
-            if (_agentProcess?.HasExited == false)
-                _agentProcess?.Kill(true);
-            if (_agentProcess?.HasExited == false)
-                _agentProcess?.WaitForExit();
-            if (_agentProcess?.HasExited == false)
-                _agentProcess?.Dispose();
-        }
-        catch (Exception e)
-        {
-            LoggerHelper.Error(e);
-        }
         _agentProcess = null;
+
+        // 重要：必须按照正确的顺序释放资源，避免原生代码访问冲突
+        // 步骤 1: 先解除 AgentClient 与资源的绑定（在Dispose MaaTasker 之前）
+        // 这样 MaaTasker.Dispose() 就不会触发 MaaAgentClient.OnResourceReleasing 事件
+        if (agentClient != null)
+        {
+            // 停止 AgentClient 连接
+            LoggerHelper.Info($"Stopping AgentClient connection");
+            try
+            {
+                bool shouldStop = false;
+                try
+                {
+                    shouldStop = !agentClient.IsStateless && !agentClient.IsInvalid;
+                }
+                catch (ObjectDisposedException)
+                {
+                    // 对象已被释放，跳过
+                }
+
+                if (shouldStop)
+                {
+                    try
+                    {
+                        agentClient.LinkStop();
+                        LoggerHelper.Info("AgentClient LinkStop succeeded");
+                    }
+                    catch (Exception e)
+                    {
+                        LoggerHelper.Warning($"AgentClient LinkStop failed: {e.Message}");
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                LoggerHelper.Warning($"AgentClient LinkStop check failed: {e.Message}");
+            }
+        }
+
+        // 步骤 2: 终止 Agent 进程（在释放 MaaTasker 之前）
+        if (agentProcess != null)
+        {
+            LoggerHelper.Info($"Terminating Agent process");
+            try
+            {
+                var hasExited = true;
+                try
+                {
+                    hasExited = agentProcess.HasExited;
+                }
+                catch (InvalidOperationException)
+                {
+                    hasExited = true;
+                }
+                catch (Exception ex)
+                {
+                    LoggerHelper.Warning($"Failed to check if agent process has exited: {ex.Message}");
+                    hasExited = true;
+                }
+
+                if (!hasExited)
+                {
+                    try
+                    {
+                        LoggerHelper.Info($"Kill AgentProcess: {agentProcess.ProcessName}");
+                        agentProcess.Kill(true);
+                        agentProcess.WaitForExit(5000);
+                        LoggerHelper.Info("Agent process killed successfully");
+                    }
+                    catch (Exception ex)
+                    {
+                        LoggerHelper.Warning($"Failed to kill agent process: {ex.Message}");
+                    }
+                }
+                else
+                {
+                    LoggerHelper.Info("AgentProcess has already exited");
+                }
+            }
+            catch (Exception e)
+            {
+                LoggerHelper.Error($"Error handling agent process: {e.Message}");
+            }
+            finally
+            {
+                try
+                {
+                    agentProcess.Dispose();
+                }
+                catch (Exception e)
+                {
+                    LoggerHelper.Warning($"AgentProcess Dispose failed: {e.Message}");
+                }
+            }
+        }
+        // 步骤 3: 停止并释放 MaaTasker（由于已经解除了 AgentClient 的绑定，不会触发 AgentClient 释放）
+        if (maaTasker != null)
+        {
+            // 先停止 MaaTasker，等待内部任务完成，避免在任务执行过程中直接 Dispose 导致 handle is null 错误
+            if (maaTasker.IsRunning && !maaTasker.IsStopping)
+            {
+                LoggerHelper.Info($"Stopping MaaTasker before dispose");
+                try
+                {
+
+                    var stopResult = maaTasker.Stop().Wait();
+                    LoggerHelper.Info($"MaaTasker Stop result: {stopResult}");
+                }
+                catch (ObjectDisposedException)
+                {
+                    LoggerHelper.Info("MaaTasker was already disposed during Stop");
+                }
+                catch (Exception e)
+                {
+                    LoggerHelper.Warning($"MaaTasker Stop failed: {e.Message}");
+                }
+            }
+
+            LoggerHelper.Info($"Disposing MaaTasker");
+            try
+            {
+                maaTasker.Dispose();
+                LoggerHelper.Info("MaaTasker disposed successfully");
+            }
+            catch (ObjectDisposedException)
+            {
+                LoggerHelper.Info("MaaTasker was already disposed");
+            }
+            catch (Exception e)
+            {
+                LoggerHelper.Warning($"MaaTasker Dispose failed: {e.Message}");
+            }
+        }
     }
+
 
     private bool ShouldProcessStop(bool finished)
     {
@@ -2105,13 +2506,12 @@ public class MaaProcessor
     {
         TaskManager.RunTaskAsync(() =>
         {
-            if (!finished)
-                RootView.AddLogByKey(LangKeys.Stopping);
+            if (!finished) DispatcherHelper.PostOnMainThread(() => RootView.AddLogByKey(LangKeys.Stopping));
 
             stopAction.Invoke();
 
-            Instances.RootViewModel.Idle = true;
-        }, null, "停止任务");
+            DispatcherHelper.PostOnMainThread(() => Instances.RootViewModel.Idle = true);
+        }, null, "停止maafw任务");
     }
 
     private MaaJobStatus AbortCurrentTasker()
@@ -2156,11 +2556,11 @@ public class MaaProcessor
         }
         else if (status == MFATask.MFATaskStatus.STOPPED)
         {
-            ToastHelper.Info(LangKeys.TaskStopped.ToLocalization());
             TaskManager.RunTask(() =>
             {
                 Task.Delay(400).ContinueWith(_ =>
                 {
+                    ToastHelper.Info(LangKeys.TaskStopped.ToLocalization());
                     RootView.AddLogByKey(LangKeys.TaskAbandoned);
                 });
             });
@@ -2170,7 +2570,7 @@ public class MaaProcessor
             if (!onlyStart)
             {
                 var list = _tempTasks.Count > 0 ? _tempTasks : Instances.TaskQueueViewModel.TaskItemViewModels.ToList();
-                list.Where(t => t.IsCheckedWithNull == null).ToList().ForEach(d => d.IsCheckedWithNull = false);
+                list.Where(t => t.IsCheckedWithNull == null && !t.IsResourceSupported).ToList().ForEach(d => d.IsCheckedWithNull = false);
 
                 if (_startTime != null)
                 {
@@ -2221,7 +2621,7 @@ public class MaaProcessor
                 CloseSoftwareAndMFA();
                 break;
             case "ShutDown":
-                Instances.ShutdownApplication();
+                Instances.ShutdownSystem();
                 break;
             case "CloseEmulatorAndRestartMFA":
                 CloseSoftwareAndRestartMFA();
@@ -2285,9 +2685,7 @@ public class MaaProcessor
 
         Instances.TaskQueueViewModel.TryReadAdbDeviceFromConfig(false);
     }
-
     private CancellationTokenSource? _emulatorCancellationTokenSource;
-
     private static Process? _softwareProcess;
 
     public async Task StartSoftware()
@@ -2360,6 +2758,81 @@ public class MaaProcessor
             await Task.Delay(1000, token);
         }
 
+    }
+
+    #endregion
+
+    #region 自定义识别和动作注册
+
+    /// <summary>
+    /// 注册自定义识别器和动作
+    /// </summary>
+    /// <param name="tasker">MaaTasker 实例</param>
+    private void RegisterCustomRecognitionsAndActions(MaaTasker tasker)
+    {
+        if (Interface == null) return;
+
+        try
+        {
+
+            // 获取当前资源的自定义目录
+            var currentResource = Instances.TaskQueueViewModel.CurrentResources
+                .FirstOrDefault(c => c.Name == Instances.TaskQueueViewModel.CurrentResource);
+            var originalPaths = currentResource?.ResolvedPath ?? currentResource?.Path;
+
+            if (originalPaths == null || originalPaths.Count == 0)
+            {
+                LoggerHelper.Info("No resource paths found, skipping custom class loading");
+                return;
+            }
+
+            // 创建副本，避免修改原始列表
+            var resourcePaths = new List<string>(originalPaths);
+            // LoggerHelper.Info(LangKeys.RegisteringCustomRecognizer.ToLocalization());
+            // LoggerHelper.Info(LangKeys.RegisteringCustomAction.ToLocalization());
+            resourcePaths.Add(Path.Combine(AppContext.BaseDirectory, "resource"));
+            // 遍历所有资源路径，查找 custom 目录
+            foreach (var resourcePath in resourcePaths)
+            {
+                var customDir = Path.Combine(resourcePath, "custom");
+                if (!Directory.Exists(customDir))
+                {
+                    LoggerHelper.Info($"Custom directory not found: {customDir}");
+                    continue;
+                }
+
+                var customClasses = CustomClassLoader.GetCustomClasses(customDir, new[]
+                {
+                    nameof(IMaaCustomRecognition),
+                    nameof(IMaaCustomAction)
+                });
+
+                foreach (var customClass in customClasses)
+                {
+                    try
+                    {
+                        if (customClass.Value is IMaaCustomRecognition recognition)
+                        {
+                            tasker.Resource.Register(recognition);
+                            LoggerHelper.Info($"Registered IMaaCustomRecognition: {customClass.Name}");
+                        }
+                        else if (customClass.Value is IMaaCustomAction action)
+                        {
+                            tasker.Resource.Register(action);
+                            LoggerHelper.Info($"Registered IMaaCustomAction: {customClass.Name}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        LoggerHelper.Error($"Failed to register custom class {customClass.Name}: {ex.Message}");
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            LoggerHelper.Error($"Error during custom recognition/action registration: {ex.Message}");
+        }
     }
 
     #endregion

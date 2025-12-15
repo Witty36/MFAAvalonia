@@ -6,10 +6,14 @@
         <value>1.3</value>
     </resheader>
     <resheader name="reader">
-        <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+        <value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=2.0.0.0, Culture=neutral,
+            PublicKeyToken=b77a5c561934e089
+        </value>
     </resheader>
     <resheader name="writer">
-        <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=2.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
+        <value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=2.0.0.0, Culture=neutral,
+            PublicKeyToken=b77a5c561934e089
+        </value>
     </resheader>
     <data name="About" xml:space="preserve">
         <value>About Us</value>
@@ -360,11 +364,14 @@
         <value>Emulator selected: {0}</value>
     </data>
     <data name="EnableRecording" xml:space="preserve">
-        <value>Enable video recording (for debugging)</value>
-    </data>
+            <value>Enable video recording (for debugging)</value>
+        </data>
     <data name="EnableSaveDraw" xml:space="preserve">
-        <value>Enable save draw (for debugging)</value>
-    </data>
+            <value>Enable save draw (for debugging)</value>
+        </data>
+    <data name="EnableSaveOnError" xml:space="preserve">
+            <value>Enable save screenshot on error (for debugging)</value>
+        </data>
     <data name="EnterTaskName" xml:space="preserve">
         <value>Please enter a task name</value>
     </data>
@@ -462,8 +469,20 @@
         <value>Please note: The external notification feature currently only sends 「All tasks completed」 notifications.</value>
     </data>
     <data name="ExternalNotificationWebhookUrl" xml:space="preserve">
-        <value>Webhook Url</value>
-    </data>
+            <value>Webhook Url</value>
+        </data>
+    <data name="CustomWebhook" xml:space="preserve">
+            <value>Custom Webhook</value>
+        </data>
+    <data name="ExternalNotificationCustomWebhookContentType" xml:space="preserve">
+            <value>Content-Type</value>
+        </data>
+    <data name="ExternalNotificationCustomWebhookPayloadTemplate" xml:space="preserve">
+            <value>Payload Template</value>
+        </data>
+    <data name="ExternalNotificationCustomWebhookPayloadTemplateDescription" xml:space="preserve">
+            <value>Use {{message}} as message placeholder, e.g.: {{"message": "{{message}}"}}</value>
+        </data>
     <data name="ExternalNotificationWxPusherUID" xml:space="preserve">
         <value>User UID</value>
     </data>
@@ -633,11 +652,14 @@
         <value>Software is already in the latest version!</value>
     </data>
     <data name="MinimizeToTray" xml:space="preserve">
-        <value>Hide to tray when minimized</value>
-    </data>
+            <value>Hide to tray when minimized</value>
+        </data>
+    <data name="MinimizeToTrayDescription" xml:space="preserve">
+            <value>When enabled, clicking the minimize button will hide the window to the system tray instead of the taskbar.</value>
+        </data>
     <data name="MiniTouch" xml:space="preserve">
-        <value>MiniTouch (Old)</value>
-    </data>
+            <value>MiniTouch (Old)</value>
+        </data>
     <data name="MirrorAutoUpdatePrompt" xml:space="preserve">
         <value>Please purchase the Mirror Chyan service to enable automatic updates, or switch the download source to GitHub</value>
     </data>
@@ -663,7 +685,7 @@
         <value>No</value>
     </data>
     <data name="NoEmulatorFound" xml:space="preserve">
-        <value>No emulator found! Please ensure that the emulator's ADB function is enabled, bridge mode is disabled, and try connecting again after restarting MFA and the emulator.</value>
+        <value>No emulator found! </value>
     </data>
     <data name="None" xml:space="preserve">
         <value>None</value>
@@ -1084,7 +1106,7 @@
     </data>
     <data name="GlobalHotkeyServiceError" xml:space="preserve">
         <value>Global Hotkey Service Failed to Load</value>
-    <data name="MultiInstanceModeGlobalHotkeyDisabled" xml:space="preserve">
+        <data name="MultiInstanceModeGlobalHotkeyDisabled" xml:space="preserve">
         <value>Multi-instance Mode: Global Hotkeys Disabled</value>
     </data>
     </data>
@@ -1230,8 +1252,11 @@
         <value>Undefined error</value>
     </data>
     <data name="Notification" xml:space="preserve">
-        <value>Notification</value>
-    </data>
+            <value>Notification</value>
+        </data>
+    <data name="NotificationDescription" xml:space="preserve">
+            <value>When enabled, system notifications will be displayed when tasks complete or important events occur.</value>
+        </data>
     <data name="EmulatorMultiInstanceQuickSettings" xml:space="preserve">
         <value>Multi-instance Quick Settings</value>
     </data>
@@ -1283,4 +1308,98 @@
     <data name="LoadResourcesFailedDetail" xml:space="preserve">
         <value>Please delete the entire folder and redownload, or contact the project maintainer.</value>
     </data>
+    <data name="NoEmulatorFoundDetail" xml:space="preserve">
+        <value>Please ensure that the emulator's ADB function is enabled, bridge mode is disabled, and try connecting again after restarting MFA and the emulator.</value>
+    </data>
+    <data name="Reset" xml:space="preserve">
+        <value>Reset</value>
+    </data>
+    <data name="BackgroundImageTitle" xml:space="preserve">
+        <value>Background Image</value>
+    </data>
+    <data name="BackgroundImageDescription" xml:space="preserve">
+        <value>Select an image as the window background, which will be overlaid on top of the default background effect.</value>
+    </data>
+    <data name="SelectBackgroundImage" xml:space="preserve">
+        <value>Select Background Image</value>
+    </data>
+    <data name="BackgroundImageOpacityTitle" xml:space="preserve">
+        <value>Background Image Opacity</value>
+    </data>
+    <data name="BackgroundImageOpacityDescription" xml:space="preserve">
+        <value>Adjust the opacity of the background image. Lower values make the image more transparent.</value>
+    </data>
+    <data name="AgentConnectionRetry" xml:space="preserve">
+        <value>Agent connection retry ({0})...</value>
+    </data>
+    <data name="TriggerDate" xml:space="preserve">
+        <value>Trigger Date</value>
+    </data>
+    <data name="SchedulePickerTip" xml:space="preserve">
+        <value>Click to set trigger date</value>
+    </data>
+    <data name="ScheduleMode" xml:space="preserve">
+        <value>Schedule Mode</value>
+    </data>
+    <data name="ScheduleDaily" xml:space="preserve">
+        <value>Daily</value>
+    </data>
+    <data name="ScheduleWeekly" xml:space="preserve">
+        <value>Weekly</value>
+    </data>
+    <data name="ScheduleMonthly" xml:space="preserve">
+        <value>Monthly</value>
+    </data>
+    <data name="ScheduleWorkdays" xml:space="preserve">
+        <value>Workdays</value>
+    </data>
+    <data name="ScheduleWeekends" xml:space="preserve">
+        <value>Weekends</value>
+    </data>
+    <data name="SelectDaysOfWeek" xml:space="preserve">
+        <value>Select Days of Week</value>
+    </data>
+    <data name="SelectDaysOfMonth" xml:space="preserve">
+        <value>Select Days of Month</value>
+    </data>
+    <data name="WeekdayMon" xml:space="preserve">
+        <value>Mon</value>
+    </data>
+    <data name="WeekdayTue" xml:space="preserve">
+        <value>Tue</value>
+    </data>
+    <data name="WeekdayWed" xml:space="preserve">
+        <value>Wed</value>
+    </data>
+    <data name="WeekdayThu" xml:space="preserve">
+        <value>Thu</value>
+    </data>
+    <data name="WeekdayFri" xml:space="preserve">
+        <value>Fri</value>
+    </data>
+    <data name="WeekdaySat" xml:space="preserve">
+        <value>Sat</value>
+    </data>
+    <data name="WeekdaySun" xml:space="preserve">
+        <value>Sun</value>
+    </data>
+    <data name="ScheduleMonthlyDay" xml:space="preserve">
+        <value>Day {0}</value>
+    </data>
+    <data name="ScheduleMonthlyDays" xml:space="preserve">
+        <value>Days: {0}</value>
+    </data>
+    <data name="ScheduleMonthlyDaySuffix" xml:space="preserve">
+        <value>th</value>  </data>
+    <data name="FontScaleTitle" xml:space="preserve">
+        <value>Font Size Scale</value>
+    </data>
+    <data name="FontScaleDescription" xml:space="preserve">
+        <value>Adjust the overall font scale of the interface. All fonts will be scaled proportionally.</value>
+    </data>
+    <data name="FontScaleValue" xml:space="preserve">
+        <value>{0}%</value>
+    </data>
+
+
 </root>

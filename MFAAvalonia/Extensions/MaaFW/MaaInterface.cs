@@ -7,11 +7,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Net.Http;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading.Tasks;
-
 namespace MFAAvalonia.Extensions.MaaFW;
 
 public partial class MaaInterface
@@ -45,11 +42,17 @@ public partial class MaaInterface
         [JsonProperty("pipeline_override")]
         public Dictionary<string, JToken>? PipelineOverride { get; set; }
 
-        [ObservableProperty][JsonIgnore] private string _displayName = string.Empty;
+        [ObservableProperty] [JsonIgnore] private string _displayName = string.Empty;
 
-        [ObservableProperty][JsonIgnore] private bool _hasDescription;
+        [ObservableProperty] [JsonIgnore] private bool _hasDescription;
 
-        [ObservableProperty][JsonIgnore] private string _displayDescription = string.Empty;
+        [ObservableProperty] [JsonIgnore] private string _displayDescription = string.Empty;
+
+        /// <summary>解析后的图标路径（用于 UI 绑定）</summary>
+        [ObservableProperty] [JsonIgnore] private string? _resolvedIcon;
+
+        /// <summary>是否有图标</summary>
+        [ObservableProperty] [JsonIgnore] private bool _hasIcon;
 
         /// <summary>
         /// 初始化显示名称并注册语言变化监听
@@ -68,8 +71,24 @@ public partial class MaaInterface
         private void UpdateDisplayName()
         {
             DisplayName = LanguageHelper.GetLocalizedDisplayName(Label, Name ?? string.Empty);
-            DisplayDescription = LanguageHelper.GetLocalizedString(Description.ResolveMarkdownContentAsync().Result);
+            DisplayDescription = LanguageHelper.GetLocalizedString(Description.ResolveContentAsync().Result);
             HasDescription = !string.IsNullOrWhiteSpace(DisplayDescription);
+            UpdateIcon();
+        }
+
+        private void UpdateIcon()
+        {
+            if (string.IsNullOrWhiteSpace(Icon))
+            {
+                ResolvedIcon = null;
+                HasIcon = false;
+                return;
+            }
+
+            // 解析图标路径（支持国际化和路径占位符）
+            var iconValue = LanguageHelper.GetLocalizedString(Icon);
+            ResolvedIcon = ReplacePlaceholder(iconValue, MaaProcessor.ResourceBase, true);
+            HasIcon = !string.IsNullOrWhiteSpace(ResolvedIcon);
         }
 
         public override string? ToString()
@@ -125,7 +144,7 @@ public partial class MaaInterface
     /// <summary>
     /// Option 配置项定义
     /// </summary>
-    public class MaaInterfaceOption
+    public partial class MaaInterfaceOption : ObservableObject
     {
         /// <summary>配置项唯一名称标识符</summary>
         [JsonIgnore]
@@ -187,6 +206,41 @@ public partial class MaaInterface
         /// <summary>是否为 switch 类型</summary>
         [JsonIgnore]
         public bool IsSwitch => OptionType == "switch";
+
+        /// <summary>解析后的图标路径（用于 UI 绑定）</summary>
+        [ObservableProperty] [JsonIgnore] private string? _resolvedIcon;
+
+        /// <summary>是否有图标</summary>
+        [ObservableProperty] [JsonIgnore] private bool _hasIcon;
+
+        /// <summary>
+        /// 初始化图标（解析图标路径）
+        /// </summary>
+        public void InitializeIcon()
+        {
+            UpdateIcon();
+            LanguageHelper.LanguageChanged += OnLanguageChangedForIcon;
+        }
+
+        private void OnLanguageChangedForIcon(object? sender, LanguageHelper.LanguageEventArgs e)
+        {
+            UpdateIcon();
+        }
+
+        private void UpdateIcon()
+        {
+            if (string.IsNullOrWhiteSpace(Icon))
+            {
+                ResolvedIcon = null;
+                HasIcon = false;
+                return;
+            }
+
+            // 解析图标路径（支持国际化和路径占位符）
+            var iconValue = LanguageHelper.GetLocalizedString(Icon);
+            ResolvedIcon = ReplacePlaceholder(iconValue, MaaProcessor.ResourceBase, true);
+            HasIcon = !string.IsNullOrWhiteSpace(ResolvedIcon);
+        }
 
         /// <summary>
         /// 根据用户输入生成处理后的 pipeline override（用于 input 类型）
@@ -279,13 +333,19 @@ public partial class MaaInterface
             };
         }
 
-        private JToken ProcessStringToken(JToken token, Regex regex, Dictionary<string, string> inputValues, Dictionary<string, Type> typeMap)
+        /// <summary>
+        /// 特殊标记，表示用户显式输入的 null 值
+        /// </summary>
+        public const string ExplicitNullMarker = "\0null";
+
+        private JToken? ProcessStringToken(JToken token, Regex regex, Dictionary<string, string> inputValues, Dictionary<string, Type> typeMap)
         {
             var strVal = token.Value<string>();
             if (string.IsNullOrEmpty(strVal)) return token;
 
             string? currentPlaceholder = null;
             var defaults = GetDefaultValues();
+            bool isExplicitNull = false;
 
             var newVal = regex.Replace(strVal, match =>
             {
@@ -294,6 +354,12 @@ public partial class MaaInterface
                 // 首先尝试从输入值获取
                 if (inputValues.TryGetValue(currentPlaceholder, out var inputStr))
                 {
+                    // 检查是否是显式 null 标记
+                    if (inputStr == ExplicitNullMarker)
+                    {
+                        isExplicitNull = true;
+                        return string.Empty; // 临时返回空字符串，后面会处理
+                    }
                     return inputStr;
                 }
 
@@ -306,6 +372,12 @@ public partial class MaaInterface
                 // 保持占位符
                 return match.Value;
             });
+
+            // 如果是显式 null，返回 JValue.CreateNull()
+            if (isExplicitNull)
+            {
+                return JValue.CreateNull();
+            }
 
             if (newVal != strVal && currentPlaceholder != null && typeMap.TryGetValue(currentPlaceholder, out var targetType))
             {
@@ -450,39 +522,88 @@ public partial class MaaInterface
         }
     }
 
-    public class MaaInterfaceTask
-    {
-        /// <summary>任务唯一标识符</summary>
-        [JsonProperty("name")] public string? Name;
-
-        /// <summary>任务显示名称，支持国际化（以$开头）。如果未设置，则显示 Name 字段的值。</summary>
-        [JsonProperty("label")] public string? Label;
-
-        /// <summary>任务入口</summary>
-        [JsonProperty("entry")] public string? Entry;
-
-        /// <summary>任务详细描述信息，支持文件路径、URL或直接文本，内容支持Markdown格式。优先于 Document。</summary>
-        [JsonProperty("description")] public string? Description;
-
-        /// <summary>文档说明（旧版兼容）</summary>
-        [JsonConverter(typeof(GenericSingleOrListConverter<string>))]
-        [JsonProperty("doc")]
-        public List<string>? Document;
-
-        [JsonProperty("default_check",
-            NullValueHandling = NullValueHandling.Include,
-            DefaultValueHandling = DefaultValueHandling.Include)]
-        public bool? Check = false;
-        [JsonProperty("repeatable")] public bool? Repeatable;
-        [JsonProperty("repeat_count")] public int? RepeatCount;
-        [JsonProperty("advanced")] public List<MaaInterfaceSelectAdvanced>? Advanced;
-        [JsonProperty("option")] public List<MaaInterfaceSelectOption>? Option;
-
-        [JsonProperty("pipeline_override")] public Dictionary<string, JToken>? PipelineOverride;
-
-        /// <summary>获取显示名称（优先 Label，否则 Name）</summary>
-        [JsonIgnore]
-        public string DisplayName => Label ?? Name ?? string.Empty;
+        public partial class MaaInterfaceTask : ObservableObject
+        {
+            /// <summary>任务唯一标识符，用作任务ID</summary>
+            [JsonProperty("name")] public string? Name;
+    
+            /// <summary>任务显示名称，用于在用户界面中展示。支持国际化字符串（以$开头）。如果未设置，则显示 Name 字段的值。</summary>
+            [JsonProperty("label")] public string? Label;
+    
+            /// <summary>任务入口，为 pipeline 中 Task 的名称</summary>
+            [JsonProperty("entry")] public string? Entry;
+    
+            /// <summary>是否默认选中该任务。Client在初始化时会根据该值决定是否默认勾选该任务。</summary>
+            [JsonProperty("default_check",
+                NullValueHandling = NullValueHandling.Include,
+                DefaultValueHandling = DefaultValueHandling.Include)]
+            public bool? Check = false;
+    
+            /// <summary>任务详细描述信息，帮助用户理解任务功能。支持文件路径、URL或直接文本，内容支持Markdown格式。</summary>
+            [JsonProperty("description")] public string? Description;
+    
+            /// <summary>任务图标文件路径</summary>
+            [JsonProperty("icon")] public string? Icon;
+    
+            /// <summary>
+            /// 可选。指定该任务支持的资源包列表。
+            /// 数组元素应与 resource 配置中的 name 字段对应。
+            /// 若不指定，则表示该任务在所有资源包中都可用。
+            /// 当用户选择了某个资源包时，只有支持该资源包的任务才会显示在用户界面中供选择。
+            /// 这允许为不同资源包提供专门的任务配置，比如活动任务只在特定资源包中可用。
+            /// </summary>
+            [JsonConverter(typeof(GenericSingleOrListConverter<string>))] [JsonProperty("resource")]
+            public List<string>? Resource;
+    
+            /// <summary>文档说明（旧版兼容）</summary>
+            [JsonConverter(typeof(GenericSingleOrListConverter<string>))] [JsonProperty("doc")]
+            public List<string>? Document;
+    
+            [JsonProperty("repeatable")] public bool? Repeatable;
+            [JsonProperty("repeat_count")] public int? RepeatCount;
+            [JsonProperty("advanced")] public List<MaaInterfaceSelectAdvanced>? Advanced;
+            [JsonProperty("option")] public List<MaaInterfaceSelectOption>? Option;
+    
+            [JsonProperty("pipeline_override")] public Dictionary<string, JToken>? PipelineOverride;
+    
+            /// <summary>获取显示名称（优先 Label，否则 Name）</summary>
+            [JsonIgnore]
+            public string DisplayName => Label ?? Name ?? string.Empty;
+    
+            /// <summary>解析后的图标路径（用于 UI 绑定）</summary>
+            [ObservableProperty] [JsonIgnore] private string? _resolvedIcon;
+    
+            /// <summary>是否有图标</summary>
+            [ObservableProperty] [JsonIgnore] private bool _hasIcon;
+    
+            /// <summary>
+            /// 初始化图标（解析图标路径）
+            /// </summary>
+            public void InitializeIcon()
+            {
+                UpdateIcon();
+                LanguageHelper.LanguageChanged += OnLanguageChangedForIcon;
+            }
+    
+            private void OnLanguageChangedForIcon(object? sender, LanguageHelper.LanguageEventArgs e)
+            {
+                UpdateIcon();
+            }
+    
+            private void UpdateIcon()
+            {
+                if (string.IsNullOrWhiteSpace(Icon))
+                {
+                    ResolvedIcon = null;
+                    HasIcon = false;
+                    return;
+                }
+    
+                // 解析图标路径（支持国际化和路径占位符）
+                var iconValue = LanguageHelper.GetLocalizedString(Icon);
+                ResolvedIcon = ReplacePlaceholder(iconValue, MaaProcessor.ResourceBase, true);
+                HasIcon = !string.IsNullOrWhiteSpace(ResolvedIcon);
+            }
 
         public override string ToString()
         {
@@ -517,18 +638,37 @@ public partial class MaaInterface
         [JsonProperty("description")]
         public string? Description { get; set; }
 
+        /// <summary>资源图标文件路径，相对于项目根目录。支持国际化（以$开头）</summary>
+        [JsonProperty("icon")]
+        public string? Icon { get; set; }
+
         [JsonConverter(typeof(GenericSingleOrListConverter<string>))]
         [JsonProperty("path")]
         public List<string>? Path { get; set; }
-        
+
+        /// <summary>
+        /// 可选。指定该资源包支持的控制器类型列表。
+        /// 数组元素应与 controller 配置中的 name 字段对应。
+        /// 若不指定，则表示支持所有控制器类型。
+        /// </summary>
+        [JsonConverter(typeof(GenericSingleOrListConverter<string>))]
+        [JsonProperty("controller")]
+        public List<string>? Controller { get; set; }
+
         [JsonIgnore]
         public List<string>? ResolvedPath { get; set; }
 
-        [ObservableProperty][JsonIgnore] private string _displayName = string.Empty;
+        [ObservableProperty] [JsonIgnore] private string _displayName = string.Empty;
 
-        [ObservableProperty][JsonIgnore] private bool _hasDescription = false;
+        [ObservableProperty] [JsonIgnore] private bool _hasDescription = false;
 
-        [ObservableProperty][JsonIgnore] private string _displayDescription = string.Empty;
+        [ObservableProperty] [JsonIgnore] private string _displayDescription = string.Empty;
+
+        /// <summary>解析后的图标路径（用于 UI 绑定）</summary>
+        [ObservableProperty] [JsonIgnore] private string? _resolvedIcon;
+
+        /// <summary>是否有图标</summary>
+        [ObservableProperty] [JsonIgnore] private bool _hasIcon;
 
         /// <summary>
         /// 初始化显示名称并注册语言变化监听
@@ -547,9 +687,25 @@ public partial class MaaInterface
         private void UpdateDisplayName()
         {
             DisplayName = LanguageHelper.GetLocalizedDisplayName(Label, Name ?? string.Empty);
-            DisplayDescription = LanguageHelper.GetLocalizedString(Description.ResolveMarkdownContentAsync().Result);
+            DisplayDescription = LanguageHelper.GetLocalizedString(Description.ResolveContentAsync().Result);
 
             HasDescription = !string.IsNullOrWhiteSpace(DisplayDescription);
+            UpdateIcon();
+        }
+
+        private void UpdateIcon()
+        {
+            if (string.IsNullOrWhiteSpace(Icon))
+            {
+                ResolvedIcon = null;
+                HasIcon = false;
+                return;
+            }
+
+            // 解析图标路径（支持国际化和路径占位符）
+            var iconValue = LanguageHelper.GetLocalizedString(Icon);
+            ResolvedIcon = ReplacePlaceholder(iconValue, MaaProcessor.ResourceBase, true);
+            HasIcon = !string.IsNullOrWhiteSpace(ResolvedIcon);
         }
     }
 
@@ -604,7 +760,7 @@ public partial class MaaInterface
         public List<string>? ChildArgs { get; set; }
         [JsonProperty("identifier")]
         public string? Identifier { get; set; }
-        
+
         [JsonProperty("timeout")]
         public long? Timeout { get; set; }
     }
@@ -619,6 +775,9 @@ public partial class MaaInterface
 
         [JsonProperty("type")]
         public string? Type { get; set; }
+
+        [JsonProperty("icon")]
+        public string? Icon { get; set; }
 
         [JsonProperty("display_short_side")]
         public long? DisplayShortSide { get; set; }
@@ -669,7 +828,7 @@ public partial class MaaInterface
 
     [JsonProperty("welcome")]
     public string? Welcome { get; set; }
-    
+
     [JsonProperty("message")]
     public string? Message { get; set; }
 
@@ -753,16 +912,18 @@ public partial class MaaInterface
         }
         else
         {
+            var path = Path.Combine(safeReplacement, input);
             // 无占位符
             if (checkIfPath)
             {
-                // 不是路径，原样返回
-                return input;
+                if (File.Exists(path))
+                    return path;
+                result = input;
             }
             else
             {
                 // 未开启路径检查：直接拼接
-                result = Path.Combine(safeReplacement, input);
+                result = path;
             }
         }
 

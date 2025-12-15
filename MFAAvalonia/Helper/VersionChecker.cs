@@ -12,6 +12,7 @@ using MFAAvalonia.Views.Windows;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Semver;
+using SukiUI.Controls;
 using SukiUI.Dialogs;
 using SukiUI.Enums;
 using SukiUI.Toasts;
@@ -48,9 +49,9 @@ public static class VersionChecker
 
     public enum VersionType
     {
-        Alpha,
-        Beta,
-        Stable
+        Alpha = 0,
+        Beta = 1,
+        Stable = 2
     }
 
     private static readonly ConcurrentQueue<ValueType.MFATask> Queue = new();
@@ -297,11 +298,10 @@ public static class VersionChecker
     {
         shouldShowToast = false;
         Instances.RootViewModel.SetUpdating(true);
-        MaaProcessor.Instance.SetTasker();
         ProgressBar? progress = null;
         TextBlock? textBlock = null;
         ISukiToast? sukiToast = null;
-        DispatcherHelper.PostOnMainThread(() =>
+        StackPanel stackPanel = await DispatcherHelper.RunOnMainThreadAsync(() =>
         {
             progress = new ProgressBar
             {
@@ -315,12 +315,14 @@ public static class VersionChecker
             };
             stackPanel.Children.Add(textBlock);
             stackPanel.Children.Add(progress);
-            sukiToast = Instances.ToastManager.CreateToast()
-                .WithTitle(LangKeys.UpdateResource.ToLocalization())
-                .WithContent(stackPanel).Queue();
+            return stackPanel;
         });
 
-
+        sukiToast = await DispatcherHelper.RunOnMainThreadAsync(() =>
+            Instances.ToastManager.CreateToast()
+                .WithTitle(LangKeys.UpdateResource.ToLocalization())
+                .WithContent(stackPanel).Queue()
+        );
         var localVersion = string.IsNullOrWhiteSpace(currentVersion) ? MaaProcessor.Interface?.Version ?? string.Empty : currentVersion;
 
         if (string.IsNullOrWhiteSpace(localVersion))
@@ -330,6 +332,7 @@ public static class VersionChecker
             Instances.RootViewModel.SetUpdating(false);
             return;
         }
+
         SetProgress(progress, 10);
         string[] strings = [];
         if (isGithub)
@@ -357,6 +360,7 @@ public static class VersionChecker
         }
         catch (Exception ex)
         {
+            Console.WriteLine(sukiToast == null);
             Dismiss(sukiToast);
             ToastHelper.Warn($"{LangKeys.FailToGetLatestVersionInfo.ToLocalization()}", ex.Message, -1);
             Instances.RootViewModel.SetUpdating(false);
@@ -372,7 +376,6 @@ public static class VersionChecker
             ToastHelper.Warn(LangKeys.FailToGetLatestVersionInfo.ToLocalization());
             Instances.RootViewModel.SetUpdating(false);
             Instances.TaskQueueViewModel.ClearDownloadProgress();
-
             return;
         }
 
@@ -396,7 +399,8 @@ public static class VersionChecker
             Instances.TaskQueueViewModel.ClearDownloadProgress();
             return;
         }
-
+        MaaProcessor.Instance.SetTasker();
+        DispatcherHelper.PostOnMainThread(() => Instances.RootView.BeforeClosed(true, true));
         var tempPath = Path.Combine(AppContext.BaseDirectory, "temp_res");
         Directory.CreateDirectory(tempPath);
         string fileExtension = GetFileExtensionFromUrl(downloadUrl);
@@ -464,30 +468,40 @@ public static class VersionChecker
             interfacePath = Path.Combine(tempExtractDir, "assets", "interface.json");
             resourceDirPath = Path.Combine(tempExtractDir, "assets", "resource");
         }
+        // 获取当前运行的可执行文件路径（最可靠的方式，即使用户重命名了文件也能正确获取）
         var exeName = Process.GetCurrentProcess().MainModule?.FileName ?? string.Empty;
+        LoggerHelper.Info($"Current process executable: {exeName}");
+        // 如果路径为空或文件不存在，尝试其他方式
+        if (string.IsNullOrEmpty(exeName) || !File.Exists(exeName))
+        {
+            // 尝试使用 Environment.ProcessPath (.NET 6+)
+            exeName = Environment.ProcessPath ?? string.Empty;
+            LoggerHelper.Info($"Environment.ProcessPath: {exeName}");
+        }
+
+        // 如果仍然为空或不存在，使用 AppContext.BaseDirectory + 当前进程名
+        if (string.IsNullOrEmpty(exeName) || !File.Exists(exeName))
+        {
+            var processName = Process.GetCurrentProcess().ProcessName;
+            var extension = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? ".exe" : "";
+            exeName = Path.Combine(AppContext.BaseDirectory, processName + extension);
+            LoggerHelper.Info($"Fallback to process name: {exeName}");
+        }
         var file = new FileInfo(interfacePath);
 
 
         if (file.Exists)
         {
-            var jsonContent = await File.ReadAllTextAsync(interfacePath);
-
-            var @interface = JObject.Parse(jsonContent);
-            // if (@interface != null && @interface["interface_version"] != null && @interface["interface_version"].ToString().Trim().Equals("2"))
-            // {
-            //     Dismiss(sukiToast);
-            //     ToastHelper.Warn(LangKeys.Warning.ToLocalization(), LangKeys.UiDoesNotSupportResourceUpdateCancelled.ToLocalization());
-            //     RootView.AddLog(LangKeys.UiDoesNotSupportResourceUpdateCancelled.ToLocalization(), Brushes.Orange, changeColor: false);
-            //     Instances.RootViewModel.SetUpdating(false);
-            //     return;
-            // }
-
             var targetPath = Path.Combine(wpfDir, "interface.json");
             file.CopyTo(targetPath, true);
         }
+
         var changesPath = Path.Combine(tempExtractDir, "changes.json");
         if (File.Exists(changesPath))
             isFull = false;
+        else
+            LoggerHelper.Error("No changes.json found");
+        LoggerHelper.Info((isGithub || isFull || currentVersion.Equals("v0.0.0", StringComparison.OrdinalIgnoreCase)) ? "全量更新" : "增量更新");
         if (isGithub || isFull || currentVersion.Equals("v0.0.0", StringComparison.OrdinalIgnoreCase))
         {
             if (Directory.Exists(resourcePath))
@@ -596,10 +610,6 @@ public static class VersionChecker
                     LoggerHelper.Error(e);
                 }
             }
-            else
-            {
-                LoggerHelper.Error("No changes.json found");
-            }
         }
 
 
@@ -609,7 +619,6 @@ public static class VersionChecker
         if (di.Exists)
         {
             await CopyAndDelete(originPath, wpfDir, progress, true);
-
         }
 
         // File.Delete(tempZipFilePath);
@@ -652,22 +661,36 @@ public static class VersionChecker
         //         shouldShowToast = false;
         //     }
         // });
-        var tasks = Instances.TaskQueueViewModel.TaskItemViewModels;
-        Instances.RootView.ClearTasks(() => MaaProcessor.Instance.InitializeData(dragItem: tasks));
+        // var tasks = Instances.TaskQueueViewModel.TaskItemViewModels;
+        // Instances.RootView.ClearTasks(() => MaaProcessor.Instance.InitializeData(dragItem: tasks));
 
         if (closeDialog)
             Dismiss(sukiToast);
         shouldShowToast = true;
         action?.Invoke();
-        Program.ReleaseMutex();
+        // 如果当前进程的可执行文件不存在（可能被更新覆盖），则在目标目录中查找
+        if (string.IsNullOrEmpty(exeName) || !File.Exists(exeName))
+        {
+            var foundExe = FindMFAExecutableInDirectory(wpfDir);
+            if (!string.IsNullOrEmpty(foundExe))
+            {
+                exeName = foundExe;
+                LoggerHelper.Info($"Using found executable from target directory: {exeName}");
+            }
+        }
+
         await RestartApplicationAsync(exeName);
     }
+
     /// <summary>
     /// 跨平台重启应用（仅 macOS 处理权限和启动逻辑，Windows/Linux 保留原有逻辑）
     /// </summary>
     /// <param name="exeName">应用可执行文件路径</param>
     public async static Task RestartApplicationAsync(string exeName)
     {
+        LoggerHelper.Info("Starting application: " + exeName);
+        LoggerHelper.Info("MFA Closed!");
+        LoggerHelper.DisposeLogger();
         if (OperatingSystem.IsMacOS())
         {
             // ==== 仅 macOS 执行专属逻辑 ====
@@ -678,7 +701,6 @@ public static class VersionChecker
 
                 // 2. macOS 专属启动方式
                 StartMacOSApplication(exeName);
-
                 // 3. 短暂延迟确保新进程启动，再关闭当前应用
                 await Task.Delay(1000);
                 Instances.ShutdownApplication();
@@ -858,14 +880,27 @@ public static class VersionChecker
             }
 
             // 11. 异步复制文件（包装同步方法为异步，避免阻塞调用线程）
-            await Task.Run(() =>
+            try
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                File.Copy(sourceFile, targetFile, overwrite: true);
-            }, cancellationToken);
+                await Task.Run(() =>
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    File.Copy(sourceFile, targetFile, overwrite: true);
+                }, cancellationToken);
 
-            // 12. 设置目标文件为普通属性（清除只读/隐藏等限制）
-            File.SetAttributes(targetFile, FileAttributes.Normal);
+                // 12. 设置目标文件为普通属性（清除只读/隐藏等限制）
+                File.SetAttributes(targetFile, FileAttributes.Normal);
+            }
+            catch (IOException ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                // 文件被锁定时，记录警告但继续处理其他文件
+                LoggerHelper.Warning($"Failed to copy file (may be locked): {sourceFile} -> {targetFile}, error: {ex.Message}");
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                // 权限不足时，记录警告但继续处理其他文件
+                LoggerHelper.Warning($"Access denied when copying file: {sourceFile} -> {targetFile}, error: {ex.Message}");
+            }
 
             // 13. 更新进度条（线程安全）
             progressCounter.Current++;
@@ -937,22 +972,23 @@ public static class VersionChecker
             LoggerHelper.Error($"delete file error, filePath: {filePath}, error: {e.Message}, try to backup.");
             int index = 0;
             string currentDate = DateTime.Now.ToString("yyyyMMddHHmm");
-            string backupFilePath = Path.Combine($"{filePath}.{index}.backupMFA");
+            string backupFilePath = $"{filePath}.{currentDate}.{index}.backupMFA";
 
             while (File.Exists(backupFilePath))
             {
                 index++;
-                backupFilePath = $"{filePath}.{currentDate}.{index}";
+                backupFilePath = $"{filePath}.{currentDate}.{index}.backupMFA";
             }
 
             try
             {
                 File.Move(filePath, backupFilePath);
+                LoggerHelper.Info($"File backed up successfully: {filePath} -> {backupFilePath}");
             }
             catch (Exception e1)
             {
-                LoggerHelper.Error($"move file error, path: {filePath}, moveTo: {backupFilePath}, error: {e1.Message}");
-                throw;
+                // 文件被锁定时，记录错误但不抛出异常，让更新流程继续
+                LoggerHelper.Warning($"move file error, path: {filePath}, moveTo: {backupFilePath}, error: {e1.Message}. File will be skipped.");
             }
         }
     }
@@ -1567,7 +1603,7 @@ public static class VersionChecker
 
         var releaseUrl = $"https://api.github.com/repos/{owner}/{repo}/releases";
         int page = 1;
-        const int perPage = 5;
+        const int perPage = 30;
         using var httpClient = CreateHttpClientWithProxy();
 
         if (!string.IsNullOrWhiteSpace(Instances.VersionUpdateSettingsUserControlModel.GitHubToken))
@@ -1579,6 +1615,10 @@ public static class VersionChecker
 
         httpClient.DefaultRequestHeaders.UserAgent.TryParseAdd("request");
         httpClient.DefaultRequestHeaders.Accept.TryParseAdd("application/json");
+
+        // 用于存储找到的最佳版本
+        JToken? bestRelease = null;
+        string bestVersion = string.Empty;
 
         while (page < 101)
         {
@@ -1598,20 +1638,34 @@ public static class VersionChecker
                     }
                     foreach (var tag in tags)
                     {
+                        // 检查是否为预发布版本
                         if ((bool)tag["prerelease"] && versionType == VersionType.Stable)
                         {
                             continue;
                         }
-                        var isAlpha = latestVersion.Contains("alpha", StringComparison.OrdinalIgnoreCase);
-                        var isBeta = latestVersion.Contains("beta", StringComparison.OrdinalIgnoreCase);
 
-                        if (isAlpha && versionType != VersionType.Alpha || isBeta && versionType != VersionType.Beta && versionType != VersionType.Alpha)
+                        var tagVersion = tag["tag_name"]?.ToString() ?? string.Empty;
+                        if (string.IsNullOrEmpty(tagVersion)) continue;
+                        // 检查版本类型是否符合更新渠道
+                        var isAlpha = tagVersion.Contains("alpha", StringComparison.OrdinalIgnoreCase);
+                        var isBeta = tagVersion.Contains("beta", StringComparison.OrdinalIgnoreCase);
+
+                        // Alpha渠道：接受所有版本（alpha、beta、stable）
+                        // Beta渠道：接受beta和stable版本，不接受alpha
+                        // Stable渠道：只接受stable版本，不接受alpha和beta
+                        if (isAlpha && versionType != VersionType.Alpha)
                         {
                             continue;
                         }
-                        latestVersion = tag["tag_name"]?.ToString() ?? string.Empty;
-                        if (!string.IsNullOrEmpty(targetVersion) && latestVersion.Trim().Equals(targetVersion.Trim(), StringComparison.OrdinalIgnoreCase))
+                        if (isBeta && versionType == VersionType.Stable)
                         {
+                            continue;
+                        }
+
+                        // 如果指定了目标版本，直接查找该版本
+                        if (!string.IsNullOrEmpty(targetVersion) && tagVersion.Trim().Equals(targetVersion.Trim(), StringComparison.OrdinalIgnoreCase))
+                        {
+                            latestVersion = tagVersion;
                             if (IsNewVersionAvailable(latestVersion, currentVersion))
                             {
                                 if (onlyCheck && repo != "MFAAvalonia")
@@ -1622,17 +1676,15 @@ public static class VersionChecker
                             GetDownloadUrlFromGitHubRelease(latestVersion, owner, repo, out url, out sha256);
                             return;
                         }
-                        if (string.IsNullOrEmpty(targetVersion) && !string.IsNullOrEmpty(latestVersion))
+
+                        // 比较版本，找到符合条件的最新版本
+                        if (string.IsNullOrEmpty(targetVersion))
                         {
-                            if (IsNewVersionAvailable(latestVersion, currentVersion))
+                            if (string.IsNullOrEmpty(bestVersion) || IsNewVersionAvailable(tagVersion, bestVersion))
                             {
-                                if (onlyCheck && repo != "MFAAvalonia")
-                                    SaveRelease(tag, "body");
-                                if (!onlyCheck && repo != "MFAAvalonia")
-                                    SaveChangelog(tag, "body");
+                                bestVersion = tagVersion;
+                                bestRelease = tag;
                             }
-                            GetDownloadUrlFromGitHubRelease(latestVersion, owner, repo, out url, out sha256);
-                            return;
                         }
                     }
                 }
@@ -1654,7 +1706,22 @@ public static class VersionChecker
             }
             page++;
         }
+
+        // 如果找到了最佳版本，返回它
+        if (!string.IsNullOrEmpty(bestVersion) && bestRelease != null)
+        {
+            latestVersion = bestVersion;
+            if (IsNewVersionAvailable(latestVersion, currentVersion))
+            {
+                if (onlyCheck && repo != "MFAAvalonia")
+                    SaveRelease(bestRelease, "body");
+                if (!onlyCheck && repo != "MFAAvalonia")
+                    SaveChangelog(bestRelease, "body");
+            }
+            GetDownloadUrlFromGitHubRelease(latestVersion, owner, repo, out url, out sha256);
+        }
     }
+
     private static string ExtractSha256FromDigest(string? digest)
     {
         if (string.IsNullOrEmpty(digest))
@@ -1954,6 +2021,8 @@ public static class VersionChecker
             var response = httpClient.GetAsync(releaseUrl).Result;
             var jsonResponse = response.Content.ReadAsStringAsync().Result;
             var responseData = JObject.Parse(jsonResponse);
+            if (!onlyCheck)
+                LoggerHelper.Info(jsonResponse);
             Exception? exception = null;
             // 处理 HTTP 状态码
             if (!response.IsSuccessStatusCode)
@@ -2331,13 +2400,18 @@ public static class VersionChecker
             return;
         DispatcherHelper.PostOnMainThread(() => bar.Value = percentage);
     }
+
     private static void Dismiss(ISukiToast? toast)
     {
         if (toast == null)
             return;
+
         try
         {
-            DispatcherHelper.PostOnMainThread(() => Instances.ToastManager.Dismiss(toast));
+            if (toast is SukiToast sukiToast)
+                DispatcherHelper.PostOnMainThread(() => sukiToast.Dismiss());
+            else
+                DispatcherHelper.PostOnMainThread(() => Instances.ToastManager.Dismiss(toast));
         }
         catch (Exception e)
         {
@@ -2526,7 +2600,6 @@ public static class VersionChecker
             return string.Empty;
         }
     }
-
     /// <summary>
     /// 从Content-Disposition头解析文件名（可选增强）
     /// </summary>
@@ -2546,5 +2619,172 @@ public static class VersionChecker
             return filename;
         }
         return null;
+    }
+
+    /// <summary>
+    /// 从目录中查找 MFAAvalonia 的可执行文件
+    ///通过查找 MFAAvalonia.dll 或 MFAAvalonia.deps.json 来定位，因为这些文件名是固定的
+    /// </summary>
+    /// <param name="directory">要搜索的目录</param>
+    /// <returns>找到的可执行文件路径，如果未找到则返回空字符串</returns>
+    private static string FindMFAExecutableInDirectory(string directory)
+    {
+        if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory))
+            return string.Empty;
+
+        try
+        {
+            // 方法1: 查找 MFAAvalonia.dll 所在目录，然后找同目录下的可执行文件
+            var dllFiles = Directory.GetFiles(directory, "MFAAvalonia.dll", SearchOption.AllDirectories);
+            if (dllFiles.Length > 0)
+            {
+                var dllDir = Path.GetDirectoryName(dllFiles[0]);
+                if (!string.IsNullOrEmpty(dllDir))
+                {
+                    var exeFile = FindExecutableInSameDirectory(dllDir);
+                    if (!string.IsNullOrEmpty(exeFile))
+                    {
+                        LoggerHelper.Info($"Found MFA executable via DLL: {exeFile}");
+                        return exeFile;
+                    }
+                }
+            }
+
+            // 方法2: 查找 MFAAvalonia.deps.json 所在目录
+            var depsFiles = Directory.GetFiles(directory, "MFAAvalonia.deps.json", SearchOption.AllDirectories);
+            if (depsFiles.Length > 0)
+            {
+                var depsDir = Path.GetDirectoryName(depsFiles[0]);
+                if (!string.IsNullOrEmpty(depsDir))
+                {
+                    var exeFile = FindExecutableInSameDirectory(depsDir);
+                    if (!string.IsNullOrEmpty(exeFile))
+                    {
+                        LoggerHelper.Info($"Found MFA executable via deps.json: {exeFile}");
+                        return exeFile;
+                    }
+                }
+            }
+
+            // 方法3: 查找 MFAAvalonia.runtimeconfig.json 所在目录
+            var runtimeConfigFiles = Directory.GetFiles(directory, "MFAAvalonia.runtimeconfig.json", SearchOption.AllDirectories);
+            if (runtimeConfigFiles.Length > 0)
+            {
+                var configDir = Path.GetDirectoryName(runtimeConfigFiles[0]);
+                if (!string.IsNullOrEmpty(configDir))
+                {
+                    var exeFile = FindExecutableInSameDirectory(configDir);
+                    if (!string.IsNullOrEmpty(exeFile))
+                    {
+                        LoggerHelper.Info($"Found MFA executable via runtimeconfig.json: {exeFile}");
+                        return exeFile;
+                    }
+                }
+            }
+
+            LoggerHelper.Warning($"Could not find MFAAvalonia executable in directory: {directory}");
+            return string.Empty;
+        }
+        catch (Exception ex)
+        {
+            LoggerHelper.Error($"Error finding MFA executable: {ex.Message}");
+            return string.Empty;
+        }
+    }
+
+    /// <summary>
+    /// 在指定目录中查找可执行文件（排除 MFAUpdater）
+    /// </summary>
+    private static string FindExecutableInSameDirectory(string directory)
+    {
+        if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory))
+            return string.Empty;
+
+        // 获取目录中的所有可执行文件
+        IEnumerable<string> exeFiles;
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            exeFiles = Directory.GetFiles(directory, "*.exe", SearchOption.TopDirectoryOnly);
+        }
+        else
+        {
+            exeFiles = Directory.GetFiles(directory, "*", SearchOption.TopDirectoryOnly)
+                .Where(f => !Path.HasExtension(f) && IsExecutable(f));
+        }
+
+        // 排除 MFAUpdater 和其他已知的非主程序可执行文件
+        var excludeNames = new[]
+        {
+            "MFAUpdater",
+            "createdump"
+        };
+
+        foreach (var exeFile in exeFiles)
+        {
+            var fileName = Path.GetFileNameWithoutExtension(exeFile);
+            if (excludeNames.Any(e => fileName.Equals(e, StringComparison.OrdinalIgnoreCase))) continue;
+
+            // 检查是否有对应的 .dll 文件（.NET 应用的特征）
+            var correspondingDll = Path.Combine(directory, fileName + ".dll");
+            if (File.Exists(correspondingDll))
+            {
+                return exeFile;
+            }
+        }
+
+        // 如果没有找到有对应 DLL 的可执行文件，返回第一个非排除的可执行文件
+        foreach (var exeFile in exeFiles)
+        {
+            var fileName = Path.GetFileNameWithoutExtension(exeFile);
+            if (!excludeNames.Any(e => fileName.Equals(e, StringComparison.OrdinalIgnoreCase)))
+            {
+                return exeFile;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    /// <summary>
+    /// 检查文件是否为可执行文件（用于非 Windows 系统）
+    /// </summary>
+    private static bool IsExecutable(string filePath)
+    {
+        try
+        {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                return filePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
+
+            // 在 Unix 系统上，检查文件是否有执行权限或是 ELF/Mach-O 格式
+            var fileInfo = new FileInfo(filePath);
+            if (!fileInfo.Exists || fileInfo.Length < 4)
+                return false;
+
+            // 读取文件头来判断是否为可执行文件
+            using var stream = File.OpenRead(filePath);
+            var header = new byte[4];
+            if (stream.Read(header, 0, 4) < 4)
+                return false;
+
+            // ELF 格式 (Linux)
+            if (header[0] == 0x7F && header[1] == 'E' && header[2] == 'L' && header[3] == 'F')
+                return true;
+
+            // Mach-O 格式 (macOS)
+            if ((header[0] == 0xCF && header[1] == 0xFA && header[2] == 0xED && header[3] == 0xFE)
+                || // 64-bit
+                (header[0] == 0xCE && header[1] == 0xFA && header[2] == 0xED && header[3] == 0xFE)
+                || // 32-bit
+                (header[0] == 0xFE && header[1] == 0xED && header[2] == 0xFA && header[3] == 0xCF)
+                || // 64-bit reverse
+                (header[0] == 0xFE && header[1] == 0xED && header[2] == 0xFA && header[3] == 0xCE)) // 32-bit reverse
+                return true;
+
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
     }
 }

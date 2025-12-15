@@ -126,9 +126,10 @@ public static class LangKeys
 	public static readonly string EmulatorDetectionStarted = "EmulatorDetectionStarted";
 	public static readonly string EmulatorExtras = "EmulatorExtras";
 	public static readonly string EmulatorSelectionMessage = "EmulatorSelectionMessage";
-	public static readonly string EnableRecording = "EnableRecording";
-	public static readonly string EnableSaveDraw = "EnableSaveDraw";
-	public static readonly string EnterTaskName = "EnterTaskName";
+		public static readonly string EnableRecording = "EnableRecording";
+		public static readonly string EnableSaveDraw = "EnableSaveDraw";
+		public static readonly string EnableSaveOnError = "EnableSaveOnError";
+		public static readonly string EnterTaskName = "EnterTaskName";
 	public static readonly string Error = "Error";
 	public static readonly string ErrorDetails = "ErrorDetails";
 	public static readonly string ErrorFeedbackLinkText = "ErrorFeedbackLinkText";
@@ -160,8 +161,11 @@ public static class LangKeys
 	public static readonly string ExternalNotificationSmtpUser = "ExternalNotificationSmtpUser";
 	public static readonly string ExternalNotificationTelegramChatId = "ExternalNotificationTelegramChatId";
 	public static readonly string ExternalNotificationTips = "ExternalNotificationTips";
-	public static readonly string ExternalNotificationWebhookUrl = "ExternalNotificationWebhookUrl";
-	public static readonly string ExternalNotificationWxPusherUID = "ExternalNotificationWxPusherUID";
+		public static readonly string ExternalNotificationWebhookUrl = "ExternalNotificationWebhookUrl";
+		public static readonly string CustomWebhook = "CustomWebhook";public static readonly string ExternalNotificationCustomWebhookContentType = "ExternalNotificationCustomWebhookContentType";
+		public static readonly string ExternalNotificationCustomWebhookPayloadTemplate = "ExternalNotificationCustomWebhookPayloadTemplate";
+		public static readonly string ExternalNotificationCustomWebhookPayloadTemplateDescription = "ExternalNotificationCustomWebhookPayloadTemplateDescription";
+		public static readonly string ExternalNotificationWxPusherUID = "ExternalNotificationWxPusherUID";
 	public static readonly string FailToGetCurrentVersionInfo = "FailToGetCurrentVersionInfo";
 	public static readonly string FailToGetDownloadUrl = "FailToGetDownloadUrl";
 	public static readonly string FailToGetLatestVersionInfo = "FailToGetLatestVersionInfo";
@@ -214,11 +218,12 @@ public static class LangKeys
 	public static readonly string LoadResourcesFailed = "LoadResourcesFailed";
 	public static readonly string LogRecord = "LogRecord";
 	public static readonly string MaaFwIsLatestVersion = "MaaFwIsLatestVersion";
-	public static readonly string MaaFWVersion = "MaaFWVersion";
-	public static readonly string MaaTouch = "MaaTouch";
-	public static readonly string MFAIsLatestVersion = "MFAIsLatestVersion";
-	public static readonly string MinimizeToTray = "MinimizeToTray";
-	public static readonly string MiniTouch = "MiniTouch";
+		public static readonly string MaaFWVersion = "MaaFWVersion";
+		public static readonly string MaaTouch = "MaaTouch";
+		public static readonly string MFAIsLatestVersion = "MFAIsLatestVersion";
+		public static readonly string MinimizeToTray = "MinimizeToTray";
+		public static readonly string MinimizeToTrayDescription = "MinimizeToTrayDescription";
+		public static readonly string MiniTouch = "MiniTouch";
 	public static readonly string MirrorAutoUpdatePrompt = "MirrorAutoUpdatePrompt";
 	public static readonly string MirrorChyan = "MirrorChyan";
 	public static readonly string MirrorUseLimitReached = "MirrorUseLimitReached";
@@ -362,6 +367,7 @@ public static class LangKeys
 	public static readonly string MirrorCdkInvalid = "MirrorCdkInvalid";
 	public static readonly string MirrorCdkMismatch = "MirrorCdkMismatch";
 	public static readonly string StartingAgent = "StartingAgent";
+	public static readonly string AgentConnectionRetry = "AgentConnectionRetry";
 	public static readonly string AgentStartFailed = "AgentStartFailed";
 	public static readonly string AgentExecutableNotFound = "AgentExecutableNotFound";
 	public static readonly string Optional = "Optional";
@@ -369,7 +375,6 @@ public static class LangKeys
 	public static readonly string ExternalNotificationCustomNotificationContent = "ExternalNotificationCustomNotificationContent";
 	public static readonly string ExternalNotificationTest = "ExternalNotificationTest";
 	public static readonly string GlobalHotkeyServiceError = "GlobalHotkeyServiceError";
-	public static readonly string MultiInstanceModeGlobalHotkeyDisabled = "MultiInstanceModeGlobalHotkeyDisabled";
 	public static readonly string UpcomingChanges = "UpcomingChanges";
 	public static readonly string TaskFailed = "TaskFailed";
 	public static readonly string ExternalNotificationCustomNotificationContentFailure = "ExternalNotificationCustomNotificationContentFailure";
@@ -417,7 +422,7 @@ public static class LangKeys
 	public static readonly string UnknownError = "UnknownError";
 	public static readonly string UndefinedError = "UndefinedError";
 	public static readonly string Notification = "Notification";
-	public static readonly string EmulatorMultiInstanceQuickSettings = "EmulatorMultiInstanceQuickSettings";
+	public static readonly string NotificationDescription = "NotificationDescription";public static readonly string EmulatorMultiInstanceQuickSettings = "EmulatorMultiInstanceQuickSettings";
 	public static readonly string EmulatorMultiInstanceEditor = "EmulatorMultiInstanceEditor";
 	public static readonly string MuMuEmulator = "MuMuEmulator";
 	public static readonly string XYAZ = "XYAZ";
@@ -434,4 +439,34 @@ public static class LangKeys
 	public static readonly string CdkExpireInSeconds = "CdkExpireInSeconds";
 	public static readonly string QueryCdkRemainingTime = "QueryCdkRemainingTime";
 	public static readonly string LoadResourcesFailedDetail = "LoadResourcesFailedDetail";
-}
+	public static readonly string NoEmulatorFoundDetail = "NoEmulatorFoundDetail";
+	public static readonly string Reset = "Reset";
+	public static readonly string BackgroundImageTitle = "BackgroundImageTitle";
+	public static readonly string BackgroundImageDescription = "BackgroundImageDescription";
+		public static readonly string SelectBackgroundImage = "SelectBackgroundImage";
+		public static readonly string BackgroundImageOpacityTitle = "BackgroundImageOpacityTitle";
+		public static readonly string BackgroundImageOpacityDescription = "BackgroundImageOpacityDescription";
+		public static readonly string TriggerDate = "TriggerDate";
+		public static readonly string SchedulePickerTip = "SchedulePickerTip";
+		public static readonly string ScheduleMode = "ScheduleMode";
+		public static readonly string ScheduleDaily = "ScheduleDaily";
+		public static readonly string ScheduleWeekly = "ScheduleWeekly";
+		public static readonly string ScheduleMonthly = "ScheduleMonthly";
+		public static readonly string ScheduleWorkdays = "ScheduleWorkdays";
+		public static readonly string ScheduleWeekends = "ScheduleWeekends";
+		public static readonly string SelectDaysOfWeek = "SelectDaysOfWeek";
+		public static readonly string SelectDaysOfMonth = "SelectDaysOfMonth";
+		public static readonly string WeekdayMon = "WeekdayMon";
+		public static readonly string WeekdayTue = "WeekdayTue";
+		public static readonly string WeekdayWed = "WeekdayWed";
+		public static readonly string WeekdayThu = "WeekdayThu";
+		public static readonly string WeekdayFri = "WeekdayFri";
+		public static readonly string WeekdaySat = "WeekdaySat";
+		public static readonly string WeekdaySun = "WeekdaySun";
+				public static readonly string ScheduleMonthlyDay = "ScheduleMonthlyDay";
+				public static readonly string ScheduleMonthlyDays = "ScheduleMonthlyDays";
+				public static readonly string ScheduleMonthlyDaySuffix = "ScheduleMonthlyDaySuffix";
+				public static readonly string FontScaleTitle = "FontScaleTitle";
+				public static readonly string FontScaleDescription = "FontScaleDescription";
+				public static readonly string FontScaleValue = "FontScaleValue";}
+	
