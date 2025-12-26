@@ -25,10 +25,20 @@ public class TitleConverter : MarkupExtension, IMultiValueConverter
         var result = $"{appName} {appVersion}";
         // 主逻辑
         if (isCustomVisible && !string.IsNullOrEmpty(customTitle))
-            result = customTitle;
+        {
+            if (!string.IsNullOrEmpty(resourceVersion))
+                result = $"{customTitle}  {resourceVersion}";
+            else
+                result = customTitle;
+        }
 
         if (isResourceVisible && !string.IsNullOrEmpty(resourceName))
             result = $"{appName} {appVersion} | {resourceName} {resourceVersion}";
+        // 新增：显示当前配置
+        if (!string.IsNullOrEmpty(currentConfig))
+        {
+            result += $"  ✏️ 当前配置: {currentConfig}";
+        }
         return result;
     }
 
