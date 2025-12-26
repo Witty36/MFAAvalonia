@@ -21,6 +21,7 @@ public class TitleConverter : MarkupExtension, IMultiValueConverter
         var resourceName = SafeGetValue<string>(values, 4);
         var resourceVersion = SafeGetValue<string>(values, 5);
         var isResourceVisible = SafeGetValue<bool>(values, 6);
+        var currentConfig = SafeGetValue<string>(values, 7);
 
         var result = $"{appName} {appVersion}";
         // 主逻辑
