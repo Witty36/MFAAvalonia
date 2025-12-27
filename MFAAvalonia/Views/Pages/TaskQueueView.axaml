@@ -340,10 +340,10 @@
                                                       Content="{Binding }"
                                                       Grid.Column="0"
                                                       MinWidth="150"
-                                                      ex:CheckBoxExtensions.EnableRightClickNull="True"
+                                                      ex:CheckBoxExtensions.EnableRightClickNull="{Binding !IsResourceOptionItem}"
                                                       HorizontalAlignment="Left"
                                                       ex:CheckBoxExtensions.LimitDragDrop="True"
-                                                      IsEnabled="{Binding Idle,Source={x:Static helper:Instances.RootViewModel}}"
+                                                      IsEnabled="{Binding !IsResourceOptionItem}"
                                                       IsChecked="{Binding IsCheckedWithNull}">
                                                 <CheckBox.ContentTemplate>
                                                     <DataTemplate x:DataType="valueType:DragItemViewModel">
@@ -790,8 +790,7 @@
                                   VerticalAlignment="Top"
                                   VerticalContentAlignment="Top"
                                   ex:ScrollViewerExtensions.AutoScroll="True"
-                                  ex:ScrollViewerExtensions.PanningMode="VerticalOnly"
-                                  >
+                                  ex:ScrollViewerExtensions.PanningMode="VerticalOnly">
                         <ItemsControl ItemsSource="{Binding Path=LogItemViewModels}">
                             <ItemsControl.ItemsPanel>
                                 <ItemsPanelTemplate>
@@ -800,7 +799,7 @@
                             </ItemsControl.ItemsPanel>
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <Grid Name="ParentGrid">
+                                    <Grid Name="ParentGrid" MinHeight="35">
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="Auto" />
                                             <ColumnDefinition Width="*" />
@@ -815,7 +814,7 @@
                                                                    Background="{Binding BackgroundColor}"
                                                                    HorizontalAlignment="Stretch"
                                                                    IsVisible="{Binding !UseMarkdown}"
-                                                                   Margin="0,5"
+                                                                   Margin="0,4.8,0,0"
                                                                    TextWrapping="WrapWithOverflow"
                                                                    Text="{Binding Content}"
                                                                    VerticalAlignment="Stretch">
@@ -824,10 +823,10 @@
                                                 </suki:IfConditionConverter.False>
                                                 <suki:IfConditionConverter.True>
                                                     <DataTemplate DataType="other:LogItemViewModel">
-                                                        <mdxaml:MarkdownScrollViewer Grid.Column="1"
+                                                        <mdxaml:MarkdownScrollViewer 
                                                                 IsVisible="{Binding UseMarkdown}"
                                                                 Markdown="{Binding Content}"
-                                                                Margin="0,0,0,0">
+                                                                Margin="0,0">
                                                             <mdxaml:MarkdownScrollViewer.Engine>
                                                                 <ex:MarkdownExtension />
                                                             </mdxaml:MarkdownScrollViewer.Engine>
@@ -855,7 +854,7 @@
                                                    TextWrapping="Wrap"
                                                    VerticalAlignment="Top" />
                                         <ContentControl Grid.Column="1" Content="{Binding}"
-                                                        HorizontalAlignment="Stretch"
+                                                        HorizontalAlignment="Stretch" VerticalAlignment="Top"
                                                         ContentTemplate="{Binding UseMarkdown,Converter={StaticResource IfConditionConverter}}">
                                             <ContentControl.MaxWidth>
                                                 <MultiBinding Converter="{converters:MaxWidthConverter}">
@@ -867,6 +866,7 @@
                                             </ContentControl.MaxWidth>
                                         </ContentControl>
                                     </Grid>
+
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>

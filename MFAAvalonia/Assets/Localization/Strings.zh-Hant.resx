@@ -798,6 +798,9 @@
     <data name="RetryOnDisconnected" xml:space="preserve">
         <value>ADB 連線失敗時嘗試啟動模擬器</value>
     </data>
+    <data name="AutoDetectOnConnectionFailed" xml:space="preserve">
+        <value>連線失敗時自動重新搜尋可用裝置</value>
+    </data>
     <data name="RunningSettings" xml:space="preserve">
         <value>執行設定</value>
     </data>
@@ -880,11 +883,14 @@
         <value>啟動遊戲</value>
     </data>
     <data name="StartupSoftwareAndScript" xml:space="preserve">
-        <value>啟動遊戲並啟動腳本</value>
-    </data>
+            <value>啟動遊戲並啟動腳本</value>
+        </data>
+    <data name="StartupScriptOnly" xml:space="preserve">
+            <value>僅啟動腳本</value>
+        </data>
     <data name="Stopping" xml:space="preserve">
-        <value>正在停止......</value>
-    </data>
+            <value>正在停止......</value>
+        </data>
     <data name="StoppingFailed" xml:space="preserve">
         <value>停止任務失敗</value>
     </data>
@@ -1392,5 +1398,17 @@
     <data name="ScheduleMonthlyDaySuffix" xml:space="preserve">
         <value>號</value>
     </data>
+    <data name="ResourceAutoSwitched" xml:space="preserve">
+        <value>資源已自動切換</value>
+    </data>
+    <data name="ResourceNotSupportController" xml:space="preserve">
+        <value>當前控制器 {1} 不支援資源 {0}，已自動切換為 {2}，請檢查資源設定</value>
+    </data>
 
+    <data name="ResourcePresetConfig" xml:space="preserve">
+        <value>資源預設配置</value>
+    </data>
+    <data name="UseFingerprintMatching" xml:space="preserve">
+        <value>使用指紋匹配裝置</value>
+    </data>
 </root>
